@@ -177,6 +177,12 @@ def main() -> None:
 
         register_webhook_routes(flask_app)
         start_manager_bot(loop)
+        # ה-scheduler עולה **רק** במצב המלא: ‏`--admin` מריץ פאנל בלבד,
+        # ולולאת בוטים אין לו. הרצת ה-digest שם הייתה נכשלת על כל tenant
+        # (אין אפליקציה לשלוח דרכה) ומציפה את הלוג.
+        from services import scheduler
+
+        scheduler.start(loop)
 
     run_admin(flask_app)
 

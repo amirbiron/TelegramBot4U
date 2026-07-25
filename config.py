@@ -85,6 +85,8 @@ SUMMARY_THRESHOLD = int(os.getenv("SUMMARY_THRESHOLD", "10"))
 KB_TOKEN_WARN_THRESHOLD = int(os.getenv("KB_TOKEN_WARN_THRESHOLD", "50000"))
 # ‏timeout ההשתקה: אחרי כמה דקות בלי הודעת בעלים הבוט חוזר לענות
 TAKEOVER_TIMEOUT_MINUTES = int(os.getenv("TAKEOVER_TIMEOUT_MINUTES", "120"))
+# השעה (שעון ישראל, 0–23) שבה נשלח ה-digest היומי לבעל העסק
+DIGEST_HOUR_LOCAL = int(os.getenv("DIGEST_HOUR_LOCAL", "20"))
 
 # ─── זיכרון לקוחות ───────────────────────────────────────────────────────
 BUSINESS_ID = os.getenv("BUSINESS_ID", "default")
