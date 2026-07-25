@@ -39,6 +39,10 @@ def _isolate_env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(_cfg, "DATA_DIR", tmp_path, raising=False)
     monkeypatch.setattr(_cfg, "DB_PATH", tmp_path / "test.db", raising=False)
+    monkeypatch.setattr(_cfg, "ADMIN_SECRET_KEY", "test-secret", raising=False)
+    monkeypatch.setattr(_cfg, "ADMIN_USERNAME", "admin", raising=False)
+    monkeypatch.setattr(_cfg, "ADMIN_PASSWORD", "test-password", raising=False)
+    monkeypatch.setattr(_cfg, "ADMIN_PASSWORD_HASH", "", raising=False)
 
     # ניקוי caches ברמת מודול שנשמרים בין טסטים
     import control_plane as _cp

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header animate-fade-in">
+    <h1><i class="bi bi-book"></i> בסיס ידע</h1>
+    <div class="d-flex gap-sm">
+        <a href="/kb/add" class="btn btn-primary btn-sm">
+            <i class="bi bi-plus-lg"></i> הוספת רשומה
+        </a>
+    </div>
+</div>
+
+<!-- חיפוש -->
+<div class="card animate-fade-in" style="margin-bottom: var(--space-md);">
+    <div class="card-body" style="padding: var(--space-sm) var(--space-md);">
+        <form hx-get="/kb/search" hx-target="#kb-search-results" hx-swap="innerHTML"
+              hx-indicator="#search-spinner" style="display: flex; gap: var(--space-sm); align-items: center;">
+            <i class="bi bi-search" style="color: var(--text-muted);"></i>
+            <input type="text" name="q" placeholder="חיפוש בכותרות ובתוכן..."
+                   style="flex: 1; border: none; background: transparent; outline: none; font-size: 0.95rem; color: var(--text-primary);"
+                   autocomplete="off">
+            <button type="submit" class="btn btn-primary btn-sm">
+                <i class="bi bi-search"></i> חיפוש
+            </button>
+            <span id="search-spinner" class="htmx-indicator text-small text-muted">מחפש...</span>
+        </form>
+    </div>
+</div>
+<div id="kb-search-results" class="animate-fade-in" style="margin-bottom: var(--space-md);"></div>
+
+<!-- סינון לפי קטגוריה -->
+<div class="filter-pills animate-fade-in">
+    <a href="/kb" class="filter-pill {% if not current_category %}active{% endif %}">הכל</a>
+    {% for cat in categories %}
+    <a href="/kb?category={{ cat|urlencode }}" class="filter-pill {% if current_category == cat %}active{% endif %}">{{ cat }}</a>
+    {% endfor %}
+</div>
+
+<div class="card animate-slide-up">
+    <div class="card-body" style="padding: 0;">
+        {% if entries %}
+        <div class="table-wrapper" id="kb-table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>מזהה</th>
+                        <th>קטגוריה</th>
+                        <th>כותרת</th>
+                        <th>תצוגה מקדימה</th>
+                        <th>סטטוס</th>
+                        <th>עודכן</th>
+                        <th>פעולות</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entry in entries %}
+                    <tr id="kb-row-{{ entry.id }}">
+                        <td data-label="מזהה">{{ entry.id }}</td>
+                        <td data-label="קטגוריה"><span class="badge badge-category">{{ entry.category }}</span></td>
+                        <td data-label="כותרת" class="fw-semibold" style="color: var(--text-primary);">{{ entry.title }}</td>
+                        <td data-label="תצוגה מקדימה">{{ entry.content[:100] }}{% if entry.content|length > 100 %}...{% endif %}</td>
+                        <td data-label="סטטוס">
+                            {% if entry.is_active %}
+                            <span class="badge badge-success">פעיל</span>
+                            {% else %}
+                            <span class="badge badge-danger">לא פעיל</span>
+                            {% endif %}
+                        </td>
+                        <td data-label="עודכן" class="text-small text-muted">{{ entry.updated_at|il_datetime }}</td>
+                        <td data-label="פעולות">
+                            <div class="actions-cell">
+                                <a href="/kb/edit/{{ entry.id }}" class="btn btn-secondary btn-icon btn-sm" title="ערוך">
+                                    <i class="bi bi-pencil"></i>
+                                </a>
+                                <button class="btn btn-outline-danger btn-icon btn-sm"
+                                        hx-post="/kb/delete/{{ entry.id }}"
+                                        hx-target="#kb-row-{{ entry.id }}"
+                                        hx-swap="outerHTML swap:0.3s"
+                                        hx-confirm="למחוק רשומה זו?"
+                                        title="מחק">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div id="kb-table-wrapper">{% include "partials/kb_empty.html" %}</div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="mt-1">
+    <span class="text-small text-muted">
+        <i class="bi bi-info-circle"></i>
+        כל בסיס הידע נשלח לבוט בכל הודעה — שינוי כאן משפיע כבר על ההודעה הבאה,
+        בלי בנייה מחדש.
+    </span>
+</div>
+{% endblock %}
