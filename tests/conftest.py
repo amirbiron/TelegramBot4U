@@ -45,8 +45,10 @@ def _isolate_env(monkeypatch, tmp_path):
 
     _cp.invalidate_status_cache()
     import kb_service as _kb
+    import rate_limiter as _rl
 
     _kb.invalidate_cache()
+    _rl.reset_all()
     yield
 
 
