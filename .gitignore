@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.ruff_cache/
+
+# סביבה וירטואלית
+venv/
+.venv/
+env/
+
+# משתני סביבה (מכיל סודות)
+.env
+
+# נתוני ריצה
+data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# מערכת הפעלה
+.DS_Store
+Thumbs.db
