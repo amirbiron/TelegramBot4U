@@ -1,0 +1,22 @@
+{
+  "update_id": 100010,
+  "business_message": {
+    "message_id": 5501,
+    "business_connection_id": "conn-demo-0001",
+    "from": {
+      "id": 500042,
+      "is_bot": false,
+      "first_name": "דנה",
+      "last_name": "לוי",
+      "username": "dana_l"
+    },
+    "chat": {
+      "id": 500042,
+      "type": "private",
+      "first_name": "דנה",
+      "username": "dana_l"
+    },
+    "date": 1785000100,
+    "text": "היי, כמה עולה תספורת?"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "update_id": 100030,
+  "deleted_business_messages": {
+    "business_connection_id": "conn-demo-0001",
+    "chat": {
+      "id": 500042,
+      "type": "private",
+      "first_name": "דנה",
+      "username": "dana_l"
+    },
+    "message_ids": [
+      5501,
+      5502
+    ]
+  }
+}

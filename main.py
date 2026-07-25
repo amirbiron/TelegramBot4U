@@ -77,6 +77,25 @@ def bootstrap() -> None:
         logger.error("ניקוי קודי הצימוד נכשל", exc_info=True)
 
 
+def cleanup_takeovers() -> None:
+    """סגירת השתקות שנשארו מהריצה הקודמת, בכל tenant פעיל.
+
+    לולאת I/O על רשימת לקוחות — ‏try/except פר-פריט (‏CLAUDE.md): כשל
+    ב-DB של לקוח אחד לא מונע את הניקוי אצל האחרים.
+    """
+    import control_plane as cp
+    from services import takeover_service
+
+    for tenant_id in cp.list_schedulable_tenant_ids():
+        try:
+            with tenant_context(tenant_id):
+                takeover_service.cleanup_on_boot()
+        except Exception:
+            logger.error(
+                "ניקוי ההשתקות נכשל ל-tenant=%s (ממשיכים)", tenant_id, exc_info=True,
+            )
+
+
 def run_seed() -> None:
     """יצירת tenant דמו + בסיס ידע לדוגמה."""
     from seed_data import seed_demo_tenant
@@ -112,9 +131,18 @@ def start_bot_loop(flask_app) -> asyncio.AbstractEventLoop:
 
     def _shutdown() -> None:
         try:
-            loop.call_soon_threadsafe(loop.stop)
-        except Exception:
-            logger.error("עצירת לולאת הבוטים נכשלה", exc_info=True)
+            from bot.registry import shutdown_all_applications
+
+            future = asyncio.run_coroutine_threadsafe(shutdown_all_applications(), loop)
+            future.result(timeout=10)
+        except Exception as e:
+            logger.error("כיבוי הבוטים ביציאה נכשל: %s", e)
+        finally:
+            # ה-cleanup עטוף בנפרד כדי שכשל בו לא ידרוס את תוצאת הכיבוי
+            try:
+                loop.call_soon_threadsafe(loop.stop)
+            except Exception:
+                logger.error("עצירת לולאת הבוטים נכשלה", exc_info=True)
 
     atexit.register(_shutdown)
     return loop
@@ -141,9 +169,13 @@ def main() -> None:
     flask_app = create_admin_app()
 
     if not args.admin:
-        # הלולאה עולה כבר עכשיו: היא הבית של אפליקציות ה-PTB, ורישום
-        # ה-webhooks של הערוץ מתחבר אליה בשלב 1.
+        # ניקוי השתקות שנשארו מהריצה הקודמת — אחרת לקוחות נשארים בלי
+        # מענה אחרי קריסה, והם אפילו לא יודעים שיש בוט שאמור לענות.
+        cleanup_takeovers()
         start_bot_loop(flask_app)
+        from bot.webhook import register_webhook_routes
+
+        register_webhook_routes(flask_app)
 
     run_admin(flask_app)
 

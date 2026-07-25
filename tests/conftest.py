@@ -46,13 +46,15 @@ def _isolate_env(monkeypatch, tmp_path):
 
     # ניקוי caches ברמת מודול שנשמרים בין טסטים
     import control_plane as _cp
-
-    _cp.invalidate_status_cache()
     import kb_service as _kb
     import rate_limiter as _rl
+    from services import owner_channel as _oc
 
+    _cp.invalidate_status_cache()
+    _cp.invalidate_connection_cache()
     _kb.invalidate_cache()
     _rl.reset_all()
+    _oc.reset_dedup()
     yield
 
 

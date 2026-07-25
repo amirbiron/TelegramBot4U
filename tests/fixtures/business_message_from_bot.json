@@ -1,0 +1,28 @@
+{
+  "update_id": 100014,
+  "business_message": {
+    "message_id": 5505,
+    "business_connection_id": "conn-demo-0001",
+    "from": {
+      "id": 900001,
+      "is_bot": false,
+      "first_name": "רון",
+      "last_name": "כהן",
+      "username": "ron_business"
+    },
+    "sender_business_bot": {
+      "id": 777000,
+      "is_bot": true,
+      "first_name": "עוזר",
+      "username": "demo_secretary_bot"
+    },
+    "chat": {
+      "id": 500042,
+      "type": "private",
+      "first_name": "דנה",
+      "username": "dana_l"
+    },
+    "date": 1785000400,
+    "text": "הודעה ששלח בוט עסקי אחר בשם החשבון"
+  }
+}

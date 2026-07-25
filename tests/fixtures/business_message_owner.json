@@ -1,0 +1,22 @@
+{
+  "update_id": 100011,
+  "business_message": {
+    "message_id": 5502,
+    "business_connection_id": "conn-demo-0001",
+    "from": {
+      "id": 900001,
+      "is_bot": false,
+      "first_name": "רון",
+      "last_name": "כהן",
+      "username": "ron_business"
+    },
+    "chat": {
+      "id": 500042,
+      "type": "private",
+      "first_name": "דנה",
+      "username": "dana_l"
+    },
+    "date": 1785000200,
+    "text": "היי דנה, 120 ש\"ח. מתי נוח לך?"
+  }
+}

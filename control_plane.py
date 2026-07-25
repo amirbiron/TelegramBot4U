@@ -755,6 +755,14 @@ def set_managed_bot_status(bot_id: int, status: str) -> None:
 #
 # cache: ה-resolve של connection_id → רשומה קורה בכל הודעה נכנסת. ‏TTL קצר
 # + אינבלידציה מפורשת בכל כתיבה — אותה תבנית כמו cache הסטטוסים למעלה.
+#
+# **למה המפתח אינו כולל tenant** (בניגוד לכלל הכללי ב-CLAUDE.md):
+# ‏connection_id הוא מזהה גלובלי־ייחודי שטלגרם מנפיקה, וה-tenant הוא
+# *ערך* בתוך הרשומה — לא חלק מהזהות שלה. מפתוח לפי (tenant, id) היה
+# שובר את הפונקציה עבור קוראים חוצי-tenant (פאנל הפלטפורמה). אכיפת
+# הבידוד יושבת בנקודה אחת מפורשת: `business_handlers._resolve_connection`
+# משווה את `tenant_id` שברשומה ל-tenant הנוכחי ודוחה אי-התאמה
+# (הגנת cross-wiring, ‏PLAN §4.2). יש טסט ייעודי לזה.
 
 _CONNECTION_CACHE_TTL = 30.0
 _connection_cache: dict[str, tuple[float, Optional[dict]]] = {}
