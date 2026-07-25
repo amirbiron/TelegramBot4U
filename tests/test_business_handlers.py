@@ -17,6 +17,7 @@ import database as db
 from bot import business_handlers as bh
 from services import owner_channel, takeover_service
 from tenancy import tenant_context
+from tests.doubles import FakeBot, FakeContext
 
 FIXTURES = pathlib.Path(__file__).parent / "fixtures"
 
@@ -25,52 +26,20 @@ CUSTOMER_ID = 500042
 CONNECTION_ID = "conn-demo-0001"
 
 
-def load_update(name: str):
+def load_raw(name: str) -> dict:
+    """ה-JSON הגולמי של ה-fixture — לשינוי לפני הפענוח."""
+    return json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+
+
+def parse_update(data: dict):
+    """‏dict ⇐ `telegram.Update`, דרך אותו נתיב שה-webhook עובר בו."""
     from telegram import Update
 
-    data = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
     return Update.de_json(data, None)
 
 
-class FakeBot:
-    """‏double ל-`telegram.Bot` שמתעד קריאות במקום לבצע אותן."""
-
-    def __init__(self, fail_send: Exception | None = None):
-        self.messages: list[dict] = []
-        self.actions: list[dict] = []
-        self.fail_send = fail_send
-
-    async def send_message(self, chat_id, text, business_connection_id=None, **kwargs):
-        if self.fail_send is not None and business_connection_id is not None:
-            raise self.fail_send
-        self.messages.append({
-            "chat_id": chat_id, "text": text,
-            "business_connection_id": business_connection_id,
-        })
-        return None
-
-    async def send_chat_action(self, chat_id, action, business_connection_id=None, **kwargs):
-        self.actions.append({
-            "chat_id": chat_id, "action": action,
-            "business_connection_id": business_connection_id,
-        })
-        return None
-
-    # ── עזרי בדיקה ──
-    @property
-    def customer_messages(self) -> list[dict]:
-        """הודעות שיצאו ללקוח (עם business_connection_id)."""
-        return [m for m in self.messages if m["business_connection_id"]]
-
-    @property
-    def owner_messages(self) -> list[dict]:
-        """הודעות שיצאו לצ'אט הבעלים (בלי business_connection_id)."""
-        return [m for m in self.messages if not m["business_connection_id"]]
-
-
-class FakeContext:
-    def __init__(self, bot):
-        self.bot = bot
+def load_update(name: str):
+    return parse_update(load_raw(name))
 
 
 @pytest.fixture
@@ -162,10 +131,13 @@ class TestConnectionHandler:
             await bh.on_business_connection(
                 load_update("business_connection.json"), FakeContext(bot),
             )
-            update = load_update("business_connection.json")
-            update.business_connection.user._id_attrs = None
-            object.__setattr__(update.business_connection.user, "id", 123456)
-            await bh.on_business_connection(update, FakeContext(bot))
+            # משנים את ה-JSON לפני הפענוח ולא את האובייקט אחריו:
+            # אובייקטי telegram קפואים, ו-`object.__setattr__` עוקף את
+            # הבנייה — כלומר הטסט היה עלול לעבור על אובייקט שספריית
+            # PTB לעולם לא הייתה מייצרת.
+            raw = load_raw("business_connection.json")
+            raw["business_connection"]["user"]["id"] = 123456
+            await bh.on_business_connection(parse_update(raw), FakeContext(bot))
         assert cp.get_business_connection(CONNECTION_ID)["owner_user_id"] == OWNER_ID
 
 
@@ -398,8 +370,15 @@ class TestEditAndDelete:
                 load_update("deleted_business_messages.json"), ctx,
             )
             remaining = db.get_conversation_history(str(CUSTOMER_ID))
-        # שתי ההודעות שהלקוח מחק נעלמו; התשובה של הבוט (בלי message_id) נשארה
-        assert all(m["message"] != "היי, כמה עולה תספורת?" for m in remaining)
+        texts = [m["message"] for m in remaining]
+        # ה-fixture מוחק את 5501 (הודעת הלקוח) ואת 5502 (תשובת הבעלים).
+        # בודקים את **שתיהן**: קודם נבדקה רק הודעת הלקוח, כך שמחיקה
+        # שמטפלת ב-message_id הראשון בלבד הייתה עוברת בשקט.
+        assert "היי, כמה עולה תספורת?" not in texts
+        assert 'היי דנה, 120 ש"ח. מתי נוח לך?' not in texts
+        # תשובת הבוט נשמרה בלי message_id, ולכן אינה נמחקת ב-cascade
+        assert any(m["authored_by"] == "bot" for m in remaining), \
+            "תשובת הבוט (בלי message_id) לא אמורה להימחק"
 
     async def test_delete_writes_to_consent_ledger(self, channel, fake_llm):
         from utils.consent_ledger import get_events_for_subject

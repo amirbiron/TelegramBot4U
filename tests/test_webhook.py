@@ -39,7 +39,12 @@ def webhook_app(default_tenant_db, tenant):
 
     register_webhook_routes(app)
     yield app
+    # עצירה, המתנה לסיום ה-thread, ורק אז סגירה. בלי ה-join הלולאה
+    # עלולה עוד לרוץ כשהטסט הבא נפתח, ו-`close()` על לולאה שרצה זורק —
+    # מה שהופך threads דולפים לכשל בטסט אקראי אחר.
     loop.call_soon_threadsafe(loop.stop)
+    thread.join(timeout=5)
+    loop.close()
 
 
 @pytest.fixture

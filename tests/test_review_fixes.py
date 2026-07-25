@@ -7,6 +7,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+from telegram.error import BadRequest
 
 
 # ─── PII sanitizer — קידומות טלפון ישראליות ────────────────────────────
@@ -351,3 +352,175 @@ class TestKnowledgeBaseFence:
         assert result["llm_failed"] is False
         assert result["kb_empty"] is True
         assert result["kb_tokens"] == 0
+
+
+# ─── סבב שני של הסקירה ─────────────────────────────────────────────────
+class TestPartialSendIsRecorded:
+    """שליחה חלקית שנרשמת כ'לא נשלח' = ההיסטוריה טוענת שלא ענינו,
+    והמודל חוזר בפנייה הבאה על תוכן שהלקוח כבר קרא."""
+
+    async def test_delivered_chunks_are_returned(self, default_tenant_db, monkeypatch):
+        import database as db
+        from bot import dispatch
+        from tests.doubles import FakeBot
+
+        monkeypatch.setattr(dispatch, "TELEGRAM_MAX_MESSAGE_LENGTH", 60)
+
+        class FailsOnThird(FakeBot):
+            def __init__(self):
+                super().__init__()
+                self.n = 0
+
+            async def send_message(self, chat_id, text, business_connection_id=None, **kw):
+                self.n += 1
+                if self.n == 3:
+                    raise BadRequest("Bad Request: BUSINESS_PEER_INVALID")
+                return await super().send_message(
+                    chat_id, text, business_connection_id, **kw
+                )
+
+        db.upsert_user("1", "דנה", inbound=True)
+        text = ("משפט ארוך לצורך הבדיקה. " * 20).strip()
+        bot = FailsOnThird()
+        sent = await dispatch.send_to_customer(bot, 10, "conn-1", text, "1", "דנה")
+
+        assert sent, "מה שנמסר בפועל לא אמור לחזור ריק"
+        assert sent != text, "השליחה הייתה חלקית — לא אמור לחזור הטקסט המלא"
+        assert len(bot.customer_messages) == 2
+        for m in bot.customer_messages:
+            assert m["text"] in sent
+
+    async def test_full_send_returns_the_whole_text(self, default_tenant_db):
+        import database as db
+        from bot import dispatch
+        from tests.doubles import FakeBot
+
+        db.upsert_user("1", "דנה", inbound=True)
+        sent = await dispatch.send_to_customer(
+            FakeBot(), 10, "conn-1", "שלום", "1", "דנה",
+        )
+        assert sent == "שלום"
+
+
+class TestWebhookSecretsAreSeparate:
+    """סוד משותף לשני ה-routes = דליפה באחד פותחת גם את השני."""
+
+    def test_default_tenant_does_not_use_the_manager_secret(self, monkeypatch):
+        import config as _cfg
+        from bot.registry import resolve_webhook_secret
+        from tenancy import DEFAULT_TENANT
+
+        monkeypatch.setattr(_cfg, "MANAGER_WEBHOOK_SECRET", "manager-secret", raising=False)
+        monkeypatch.setattr(_cfg, "TELEGRAM_WEBHOOK_SECRET", "bot-secret", raising=False)
+        assert resolve_webhook_secret(DEFAULT_TENANT) == "bot-secret"
+
+    def test_missing_secret_is_empty_not_the_manager_one(self, monkeypatch):
+        import config as _cfg
+        from bot.registry import resolve_webhook_secret
+        from tenancy import DEFAULT_TENANT
+
+        monkeypatch.setattr(_cfg, "MANAGER_WEBHOOK_SECRET", "manager-secret", raising=False)
+        monkeypatch.setattr(_cfg, "TELEGRAM_WEBHOOK_SECRET", "", raising=False)
+        # ריק ⇒ ‏_verify_secret דוחה (fail closed), ולא נופל לסוד המנהל
+        assert resolve_webhook_secret(DEFAULT_TENANT) == ""
+
+
+class TestOwnerNotificationDedup:
+    """‏kind ריק עוקף את הדה-דופ — כשל שליחה חוזר היה מציף את הבעלים."""
+
+    async def test_repeated_send_failure_is_suppressed(self, default_tenant_db):
+        from services import owner_channel
+        from tests.doubles import FakeBot
+
+        owner_channel.reset_dedup()
+        bot = FakeBot()
+        conn = {"connection_id": "conn-1", "user_chat_id": 999}
+        assert await owner_channel.notify_send_failed(bot, conn, "דנה", "other") is True
+        assert await owner_channel.notify_send_failed(bot, conn, "דנה", "other") is False
+        assert len(bot.messages) == 1
+
+    async def test_different_customer_still_notifies(self, default_tenant_db):
+        from services import owner_channel
+        from tests.doubles import FakeBot
+
+        owner_channel.reset_dedup()
+        bot = FakeBot()
+        conn = {"connection_id": "conn-1", "user_chat_id": 999}
+        await owner_channel.notify_send_failed(bot, conn, "דנה", "other")
+        assert await owner_channel.notify_send_failed(bot, conn, "יוסי", "other") is True
+        assert len(bot.messages) == 2
+
+
+class TestLlmModelIsHonored:
+    """‏LLM_MODEL שנקרא ואז נזרק = המשתמש בטוח שהחליף מודל ולא החליף."""
+
+    def test_openai_branch_uses_llm_model(self, monkeypatch):
+        import llm_client
+
+        captured = {}
+
+        class _FakeCompletions:
+            def create(self, **kw):
+                captured.update(kw)
+                raise RuntimeError("עוצרים אחרי לכידת הפרמטרים")
+
+        fake_client = MagicMock(chat=MagicMock(completions=_FakeCompletions()))
+        monkeypatch.setattr(llm_client, "get_openai_client", lambda: fake_client)
+        monkeypatch.setenv("LLM_MODEL", "gpt-4o-mini-custom")
+        monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+        with pytest.raises(RuntimeError):
+            llm_client.chat_complete([], temperature=0.5, max_tokens=100)
+        assert captured["model"] == "gpt-4o-mini-custom"
+
+    def test_falls_back_to_openai_model(self, monkeypatch):
+        import config as _cfg
+        import llm_client
+
+        captured = {}
+
+        class _FakeCompletions:
+            def create(self, **kw):
+                captured.update(kw)
+                raise RuntimeError("stop")
+
+        fake_client = MagicMock(chat=MagicMock(completions=_FakeCompletions()))
+        monkeypatch.setattr(llm_client, "get_openai_client", lambda: fake_client)
+        monkeypatch.setattr(_cfg, "OPENAI_MODEL", "gpt-4.1-mini", raising=False)
+        monkeypatch.setenv("LLM_MODEL", "")
+
+        with pytest.raises(RuntimeError):
+            llm_client.chat_complete([], temperature=0.5, max_tokens=100)
+        assert captured["model"] == "gpt-4.1-mini"
+
+
+class TestSuggestedUsernameIsValid:
+    """הצעה שלא עומדת בכללי טלגרם נדחית במסך היצירה, בלי שנדע למה."""
+
+    @pytest.mark.parametrize(
+        "slug", ["ac", "a", "acme", "acme-cafe", "123shop", "x" * 40, "tov"],
+    )
+    def test_suggestion_matches_telegram_rules(self, slug):
+        from bot.manager_bot import _USERNAME_RE, suggest_username
+
+        name = suggest_username(slug)
+        assert _USERNAME_RE.match(name), f"username לא תקין: {name}"
+        assert 5 <= len(name) <= 32
+
+    def test_taken_names_are_skipped(self):
+        from bot.manager_bot import suggest_username
+
+        assert suggest_username("acme", {"acme_bot"}) != "acme_bot"
+
+
+class TestTenantHasPaired:
+    """הפאנל שואל את ה-control plane ולא את ה-SQL של platform.db."""
+
+    def test_false_before_pairing(self, tenant, platform_db):
+        platform_db.create_pairing_code(tenant)
+        assert platform_db.tenant_has_paired(tenant) is False
+
+    def test_true_after_pairing(self, tenant, platform_db):
+        code = platform_db.create_pairing_code(tenant)
+        platform_db.consume_pairing_code(code, 4242)
+        assert platform_db.tenant_has_paired(tenant) is True

@@ -64,6 +64,22 @@ def suggest_username(tenant_id: str, taken: set[str] | None = None) -> str:
     while candidate.lower() in taken:
         suffix += 1
         candidate = f"{base}{suffix}_bot"
+
+    # אכיפת התבנית בפועל ולא רק תיעודה. ‏slug קצר ("ac") נותן
+    # "ac_bot" — 6 תווים, מתחת למינימום של טלגרם — וההצעה הייתה נדחית
+    # במסך היצירה בלי שנדע למה. הריפוד מתרחש כאן, לא אצל הלקוח.
+    if not _USERNAME_RE.match(candidate):
+        padded = (base + "_service")[: _USERNAME_MAX - 4]
+        candidate = f"{padded}_bot"
+        suffix = 1
+        while candidate.lower() in taken:
+            suffix += 1
+            candidate = f"{padded}{suffix}_bot"
+    if not _USERNAME_RE.match(candidate):
+        logger.warning(
+            "לא הצלחתי לגזור username תקין מ-%s — נופלים להצעה גנרית", tenant_id,
+        )
+        candidate = "my_business_bot"
     return candidate
 
 

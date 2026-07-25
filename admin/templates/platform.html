@@ -69,7 +69,7 @@
                                 {% if t.status == 'active' %}
                                 <form method="POST" action="/platform/{{ t.tenant_id }}/offboard"
                                       style="display:inline;"
-                                      onsubmit="return confirm('לנתק את {{ t.display_name }}? הבוט שלו ינוטרל והחשבון יושעה.');">
+                                      onsubmit="return confirm('לנתק את ' + {{ t.display_name | tojson }} + '? הבוט שלו ינוטרל והחשבון יושעה.');">
                                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                     <button type="submit" class="btn btn-outline-danger btn-sm">
                                         <i class="bi bi-plug"></i> ניתוק

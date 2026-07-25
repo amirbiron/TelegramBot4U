@@ -315,7 +315,7 @@ async def _handle_media(bot, msg, conn: dict, user_id: str, display_name: str,
     if sent:
         try:
             db.save_message(
-                user_id, display_name, "assistant", bridge,
+                user_id, display_name, "assistant", sent,
                 authored_by="bot", tg_chat_id=chat_id,
             )
         except Exception:

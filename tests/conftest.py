@@ -83,3 +83,4 @@ def tenant(platform_db):
     """‏tenant רשום עם data plane מאותחל. מחזיר את ה-slug."""
     platform_db.create_tenant("acme", "עסק לדוגמה")
     return "acme"
+

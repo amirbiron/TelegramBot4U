@@ -290,6 +290,16 @@ def create_tenant(tenant_id: str, display_name: str, plan: str = "premium") -> N
                 "create_tenant(%s): גם ביטול הרישום נכשל — נדרש ניקוי ידני",
                 tenant_id, exc_info=True,
             )
+        # ניקוי התיקייה שנוצרה חלקית. בלעדיו הניסיון החוזר מתחיל מ-DB
+        # פגום (‏init_db שנפל באמצע משאיר קובץ עם סכימה חלקית, ואת קובצי
+        # ה-WAL לצדו) — ואז הוא נכשל שוב, מסיבה אחרת לגמרי.
+        try:
+            remove_tenant_files(tenant_id)
+        except Exception:
+            logger.error(
+                "create_tenant(%s): ניקוי תיקיית ה-tenant נכשל — נדרש ניקוי ידני",
+                tenant_id, exc_info=True,
+            )
         raise
 
     logger.info("tenant created: %s (%s)", tenant_id, display_name)
@@ -983,6 +993,19 @@ def consume_pairing_code(code: str, user_id: int) -> Optional[str]:
             "SELECT tenant_id FROM pairing_codes WHERE code = ?", (code_hash,)
         ).fetchone()
         return row["tenant_id"] if row else None
+
+
+def tenant_has_paired(tenant_id: str) -> bool:
+    """האם מישהו כבר ניצל קוד צימוד של ה-tenant (שלב ראשון בהקמה)."""
+    if not platform_db_path().exists():
+        return False
+    with get_platform_connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM pairing_codes WHERE tenant_id = ? "
+            "AND used_by_user_id IS NOT NULL LIMIT 1",
+            (tenant_id,),
+        ).fetchone()
+        return row is not None
 
 
 def get_tenant_by_paired_user(user_id: int) -> Optional[str]:

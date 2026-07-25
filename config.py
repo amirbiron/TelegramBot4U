@@ -49,6 +49,11 @@ MANAGER_BOT_USERNAME = os.getenv("MANAGER_BOT_USERNAME", "")
 MANAGER_WEBHOOK_SECRET = os.getenv("MANAGER_WEBHOOK_SECRET", "")
 # הבוט הידני של שלב 1 (‏tenant יחיד, ‏Secretary Mode הודלק ב-BotFather).
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# הסוד של ה-webhook שלו. **בנפרד** מ-MANAGER_WEBHOOK_SECRET: שני
+# ה-routes מקבלים תעבורה מבחוץ, וסוד משותף אומר שדליפה באחד פותחת גם
+# את השני — הזרקת עדכונים לצ'אטים של לקוחות דרך ה-route של הבוט המנהל,
+# או להפך. ‏tenants בפלטפורמה מחזיקים סוד משלהם ב-tenant_secrets ממילא.
+TELEGRAM_WEBHOOK_SECRET = os.getenv("TELEGRAM_WEBHOOK_SECRET", "")
 # בסיס ה-URL הציבורי לרישום webhooks (בלי / בסוף)
 WEBHOOK_BASE_URL = os.getenv("WEBHOOK_BASE_URL", "").rstrip("/")
 

@@ -6,7 +6,7 @@ from telegram.error import BadRequest, Forbidden, NetworkError, RetryAfter
 import database as db
 from bot import dispatch
 from services import owner_channel
-from tests.test_business_handlers import FakeBot
+from tests.doubles import FakeBot, FakeContext
 
 
 class TestErrorClassification:
@@ -19,13 +19,15 @@ class TestErrorClassification:
         assert dispatch.classify_send_error(BadRequest(message)) == \
             dispatch.FAILURE_WINDOW_CLOSED
 
-    @pytest.mark.parametrize("message", [
-        "Bad Request: not enough rights to send text messages",
-        "Bad Request: BUSINESS_CONNECTION_INVALID",
-        "Forbidden: bot can_reply right is missing",
+    @pytest.mark.parametrize("exc_type,message", [
+        (BadRequest, "Bad Request: not enough rights to send text messages"),
+        (BadRequest, "Bad Request: BUSINESS_CONNECTION_INVALID"),
+        # טלגרם מחזירה את זה כ-Forbidden, לא כ-BadRequest — הסיווג חייב
+        # לעבוד על הטיפוס האמיתי ולא רק על הטקסט
+        (Forbidden, "Forbidden: bot can_reply right is missing"),
     ])
-    def test_no_permission(self, message):
-        assert dispatch.classify_send_error(BadRequest(message)) == \
+    def test_no_permission(self, exc_type, message):
+        assert dispatch.classify_send_error(exc_type(message)) == \
             dispatch.FAILURE_NO_PERMISSION
 
     def test_forbidden_defaults_to_no_permission(self):
@@ -70,8 +72,8 @@ class TestSendToCustomer:
     async def test_sends_with_connection_id(self, default_tenant_db):
         bot = FakeBot()
         db.upsert_user("1", "דנה", inbound=True)
-        ok = await dispatch.send_to_customer(bot, 10, "conn-1", "שלום", "1", "דנה")
-        assert ok is True
+        sent = await dispatch.send_to_customer(bot, 10, "conn-1", "שלום", "1", "דנה")
+        assert sent == "שלום"
         assert bot.messages[0]["business_connection_id"] == "conn-1"
 
     async def test_long_message_split_into_chunks(self, default_tenant_db, monkeypatch):
@@ -89,9 +91,10 @@ class TestSendToCustomer:
         db.upsert_user("1", "דנה", inbound=True)
         conn = {"connection_id": "conn-1", "user_chat_id": 999}
 
-        ok = await dispatch.send_to_customer(bot, 10, "conn-1", "שלום", "1", "דנה", conn)
+        sent = await dispatch.send_to_customer(bot, 10, "conn-1", "שלום", "1", "דנה", conn)
 
-        assert ok is False
+        # שום צ'אנק לא נמסר ⇒ מחרוזת ריקה (falsy, כמו ה-False הקודם)
+        assert sent == ""
         assert db.get_user("1")["send_failure_reason"] == dispatch.FAILURE_WINDOW_CLOSED
         # הלקוח לא קיבל כלום; הבעלים כן
         assert bot.customer_messages == []
@@ -134,7 +137,7 @@ class TestSendToCustomer:
         import asyncio
 
         calls = {"n": 0}
-        slept = {}
+        slept: list[float] = []
 
         class FloodBot(FakeBot):
             async def send_message(self, chat_id, text, business_connection_id=None, **kw):
@@ -146,15 +149,18 @@ class TestSendToCustomer:
                 )
 
         async def _fake_sleep(seconds):
-            slept["seconds"] = seconds
+            # אוגרים כל המתנה: הפאוזה בין צ'אנקים קוראת לאותו sleep,
+            # וקודם רק הערך האחרון נשמר — כך שהבדיקה על ההמתנה של
+            # טלגרם הייתה עלולה לעבור על ערך שאינו שלה.
+            slept.append(seconds)
 
         monkeypatch.setattr(asyncio, "sleep", _fake_sleep)
         db.upsert_user("1", "דנה", inbound=True)
         bot = FloodBot()
-        ok = await dispatch.send_to_customer(bot, 10, "conn-1", "שלום", "1", "דנה")
-        assert ok is True
+        sent = await dispatch.send_to_customer(bot, 10, "conn-1", "שלום", "1", "דנה")
+        assert sent == "שלום"
         assert calls["n"] == 2
-        assert slept["seconds"] >= 2
+        assert any(s >= 2 for s in slept), f"לא הייתה המתנה של 2ש' לפחות: {slept}"
 
 
 class TestOwnerChannelDedup:

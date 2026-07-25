@@ -33,6 +33,11 @@ DEDUP_WINDOW_SECONDS = {
     "window_closed": 3600,    # שעה פר-לקוח
     "media": 300,             # חמש דקות — סדרת תמונות היא אירוע אחד
     "connection_changed": 60,
+    # כשל שליחה לא מסווג. ממופתח לפי לקוח, ולכן חלון קצר יחסית: תקלה
+    # מתמשכת תצוף שוב, אבל סדרת כשלים באותה שיחה היא אירוע אחד. בלי
+    # השורה הזו ה-kind לא מוכר, `_should_send` מחזיר True תמיד,
+    # והבעלים מקבל התראה על כל ניסיון.
+    "send_failed": 900,
 }
 
 # ‏state ברמת מודול — ממופתח לפי tenant מהיום הראשון (CLAUDE.md).
@@ -147,7 +152,7 @@ async def notify_send_failed(bot, conn: dict, display_name: str, reason: str) ->
         bot, conn,
         f"⚠️ ניסיתי לענות ל{display_name} וזה לא עבר ({reason}). "
         "הוא לא קיבל תשובה — כדאי שתסתכל.",
-        kind="", subject=display_name,
+        kind="send_failed", subject=display_name,
     )
 
 

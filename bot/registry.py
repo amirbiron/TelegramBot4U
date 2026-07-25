@@ -54,7 +54,9 @@ def resolve_webhook_secret(tenant_id: str) -> str:
     if tenant_id == DEFAULT_TENANT:
         import config as _cfg
 
-        return getattr(_cfg, "MANAGER_WEBHOOK_SECRET", "") or ""
+        # סוד ייעודי, לא זה של הבוט המנהל: שני ה-routes חשופים לרשת,
+        # וסוד משותף הופך דליפה באחד לפתיחה של השני.
+        return getattr(_cfg, "TELEGRAM_WEBHOOK_SECRET", "") or ""
     try:
         from control_plane import get_tenant_secret
 

@@ -698,8 +698,24 @@ def create_admin_app() -> Flask:
                 flash(f"היצירה נכשלה: {exc}", "danger")
                 return render_template("platform_new_tenant.html")
 
-            # מפתח ה-webhook נוצר יחד עם הלקוח — הוא הזהות של ה-route שלו
-            cp.set_route("telegram_webhook_key", cp.generate_route_key(), tenant_id)
+            # מפתח ה-webhook נוצר יחד עם הלקוח — הוא הזהות של ה-route שלו.
+            # כשל כאן מגלגל אחורה את ה-tenant: אחרת נשאר לקוח רשום בלי
+            # נתיב, שנראה תקין באשף אבל לא יקבל אף עדכון, וניסיון חוזר
+            # ליצור אותו ייחסם על slug תפוס.
+            try:
+                cp.set_route("telegram_webhook_key", cp.generate_route_key(), tenant_id)
+            except Exception as exc:
+                logger.error("רישום ה-route נכשל — מגלגלים אחורה", exc_info=True)
+                try:
+                    cp.delete_tenant(tenant_id, backup=False)
+                except Exception:
+                    logger.error(
+                        "גם גלגול ה-tenant %s אחורה נכשל — נדרש ניקוי ידני",
+                        tenant_id, exc_info=True,
+                    )
+                flash(f"היצירה נכשלה: {exc}", "danger")
+                return render_template("platform_new_tenant.html")
+
             _audit_log("tenant_create", f"tenant={tenant_id}")
             return redirect(url_for("platform_onboarding", tenant_id=tenant_id))
 
@@ -755,23 +771,13 @@ def create_admin_app() -> Flask:
 
         bot_row = cp.get_managed_bot_for_tenant(tenant_id)
         connection = cp.get_business_connection_for_tenant(tenant_id)
-        paired = any(
-            r["used_by_user_id"] for r in _pairing_rows(tenant_id)
-        )
+        # דרך ה-API של ה-control plane ולא ב-SQL מכאן: `platform.db` הוא
+        # שלו, והפאנל שמכיר את שמות העמודות שלו נשבר בשקט כשהן משתנות.
+        paired = cp.tenant_has_paired(tenant_id)
         return render_template(
             "partials/onboarding_status.html",
             paired=paired, bot=bot_row, connection=connection,
         )
-
-    def _pairing_rows(tenant_id: str) -> list[dict]:
-        import control_plane as cp
-
-        with cp.get_platform_connection() as conn:
-            rows = conn.execute(
-                "SELECT used_by_user_id FROM pairing_codes WHERE tenant_id = ?",
-                (tenant_id,),
-            ).fetchall()
-        return [dict(r) for r in rows]
 
     @app.route("/platform/<tenant_id>/offboard", methods=["POST"])
     @login_required

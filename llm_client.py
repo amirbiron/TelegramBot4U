@@ -154,7 +154,9 @@ def chat_complete(messages: list[dict], *, temperature: float, max_tokens: int) 
         return _chat_complete_claude(
             messages, model=model, max_tokens=max_tokens, api_key=api_key,
         )
-    return _chat_complete_openai(messages, temperature=temperature, max_tokens=max_tokens)
+    return _chat_complete_openai(
+        messages, temperature=temperature, max_tokens=max_tokens, model=model,
+    )
 
 
 def _get_openai_model() -> str:
@@ -165,7 +167,7 @@ def _get_openai_model() -> str:
 
 
 def _chat_complete_openai(
-    messages: list[dict], *, temperature: float, max_tokens: int
+    messages: list[dict], *, temperature: float, max_tokens: int, model: str = ""
 ) -> ChatResult:
     """ענף ברירת המחדל — OpenAI או כל ספק תואם (Gemini דרך OPENAI_BASE_URL).
 
@@ -175,7 +177,10 @@ def _chat_complete_openai(
     (‏reasoning_effort="none" — הפרמטר הסטנדרטי שה-compat layer תומך בו).
     """
     client = get_openai_client()
-    _model = _get_openai_model()
+    # ‏LLM_MODEL גובר על OPENAI_MODEL. בלי השורה הזו הענף הזה התעלם ממנו
+    # בשקט: מי שהגדיר LLM_MODEL בלי לשנות את LLM_PROVIDER קיבל את מודל
+    # ברירת המחדל, בלי שום סימן לכך.
+    _model = model or _get_openai_model()
     extra_kwargs = {}
     if _model.startswith("gemini-2.5") or "thinking" in _model.lower():
         extra_kwargs["reasoning_effort"] = "none"

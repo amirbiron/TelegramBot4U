@@ -142,15 +142,23 @@ async def _typing_pause(bot, chat_id: int, connection_id: str, text: str) -> Non
 async def send_to_customer(
     bot, chat_id: int, connection_id: str, text: str, user_id: str, display_name: str,
     conn: dict | None = None,
-) -> bool:
-    """שליחת טקסט ללקוח בשם הבעלים. מחזיר האם נשלח במלואו.
+) -> str:
+    """שליחת טקסט ללקוח בשם הבעלים. מחזיר את מה **שנמסר בפועל**.
 
-    בכשל: מסווג, מסמן ב-DB, ומתריע לבעלים. **לא** שולח שום דבר ללקוח
-    ולא מנסה שוב.
+    בכשל: מסווג, מסמן ב-DB, ומתריע לבעלים. **לא** מנסה שוב.
+
+    **למה מחזירים טקסט ולא bool:** הודעה ארוכה מפוצלת לצ'אנקים, וכשל
+    בצ'אנק השלישי לא מבטל את השניים שהלקוח כבר קרא. ‏bool היה מחזיר
+    False, הקורא לא היה שומר כלום, וההיסטוריה הייתה טוענת שלא ענינו —
+    כלומר בפנייה הבאה המודל היה חוזר על אותו תוכן מול לקוח שכבר קיבל
+    אותו. הערך הריק ('') עדיין falsy, כך שבדיקות `if sent:` קיימות
+    ממשיכות לעבוד.
     """
     chunks = split_message(text)
     if not chunks:
-        return False
+        return ""
+
+    delivered: list[str] = []
 
     await _typing_pause(bot, chat_id, connection_id, chunks[0])
 
@@ -171,18 +179,19 @@ async def send_to_customer(
                 )
             except TelegramError as exc2:
                 await _handle_send_failure(bot, exc2, user_id, display_name, conn)
-                return False
+                return "\n\n".join(delivered)
         except TelegramError as exc:
             await _handle_send_failure(bot, exc, user_id, display_name, conn)
-            return False
+            return "\n\n".join(delivered)
         except Exception:
             logger.error("שליחה ללקוח נכשלה מסיבה לא צפויה", exc_info=True)
-            return False
+            return "\n\n".join(delivered)
 
+        delivered.append(chunk)
         if index < len(chunks) - 1:
             # רווח קטן בין חלקים — רצף הודעות מיידי נראה מכונתי
             await asyncio.sleep(0.4)
-    return True
+    return text
 
 
 async def _handle_send_failure(
@@ -227,9 +236,16 @@ async def dispatch_result(bot, result, msg, conn: dict, display_name: str) -> No
             bot, chat_id, connection_id, result.text, user_id, display_name, conn,
         )
         if sent:
+            # נשמר מה שנמסר, לא מה שניסינו לשלוח: בשליחה חלקית ההפרש
+            # הוא בדיוק מה שהלקוח לא ראה, ואסור שההיסטוריה תטען אחרת.
+            if sent != result.text:
+                logger.warning(
+                    "שליחה חלקית ללקוח — נשמרו %d מתוך %d תווים",
+                    len(sent), len(result.text),
+                )
             try:
                 db.save_message(
-                    user_id, display_name, "assistant", result.text,
+                    user_id, display_name, "assistant", sent,
                     authored_by="bot", tg_chat_id=chat_id,
                 )
             except Exception:
