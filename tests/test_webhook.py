@@ -39,6 +39,13 @@ def webhook_app(default_tenant_db, tenant):
 
     register_webhook_routes(app)
     yield app
+    # ניקוז לפני עצירה: ה-route מוסר את העיבוד ללולאה ומחזיר 200 מיד,
+    # כך שבסוף הטסט יש קורוטינה שטרם רצה. עצירה בלעדיו משאירה אותה
+    # לאיסוף זבל ומייצרת "coroutine was never awaited" בטסט אקראי.
+    try:
+        asyncio.run_coroutine_threadsafe(asyncio.sleep(0), loop).result(timeout=5)
+    except Exception:
+        pass  # noqa: S110 — ניקוז best-effort בסוף טסט, לא נתיב מוצר
     # עצירה, המתנה לסיום ה-thread, ורק אז סגירה. בלי ה-join הלולאה
     # עלולה עוד לרוץ כשהטסט הבא נפתח, ו-`close()` על לולאה שרצה זורק —
     # מה שהופך threads דולפים לכשל בטסט אקראי אחר.

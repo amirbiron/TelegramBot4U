@@ -190,6 +190,23 @@ def init_db():
                 ended_at    TEXT
             );
 
+            -- ── יעד ההתראה לבעלים ───────────────────────────────────────
+            -- מיפוי: ההודעה ששלחנו לצ'אט הבעלים ⇐ הלקוח שהיא עוסקת בו.
+            -- זה מה שמאפשר לבעלים לענות `/pause` **בתגובה** להתראה
+            -- ולהשתיק את אותה שיחה בלבד. בלי המיפוי טלגרם נותנת לנו רק
+            -- את message_id של ההודעה שהוא הגיב לה, ואין ממנו דרך חזרה
+            -- ללקוח.
+            --
+            -- ‏natural key: ‏message_id בצ'אט הבעלים (ייחודי פר-בוט).
+            CREATE TABLE IF NOT EXISTS owner_alert_targets (
+                owner_message_id INTEGER PRIMARY KEY,
+                user_id          TEXT NOT NULL,
+                chat_id          TEXT NOT NULL,
+                created_at       TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_alert_targets_user
+                ON owner_alert_targets(user_id);
+
             -- ── משתמשים חסומים ──────────────────────────────────────────
             -- ה-row נשאר גם אחרי מחיקת נתונים (hold צר לאכיפה — אינטרס
             -- לגיטימי): רק block_category + blocked_at + appeal_contact.
@@ -962,6 +979,93 @@ def is_autopilot_enabled() -> bool:
     return bool(get_bot_settings().get("autopilot_enabled", 1))
 
 
+def set_autopilot_enabled(enabled: bool) -> None:
+    """הדלקה/כיבוי של ה-autopilot הגלובלי (‏`/pause`, ‏`/resume`)."""
+    with get_connection() as conn:
+        conn.execute(
+            "UPDATE bot_settings SET autopilot_enabled = ?, "
+            "updated_at = datetime('now') WHERE id = 1",
+            (1 if enabled else 0,),
+        )
+    logger.info("autopilot %s", "הודלק" if enabled else "כובה")
+
+
+# ─── מיפוי התראה לבעלים ⇐ לקוח ───────────────────────────────────────────
+
+
+def record_owner_alert_target(owner_message_id: int, user_id: str, chat_id: str) -> None:
+    """שמירת היעד של התראה שנשלחה לבעלים, לצורך `/pause` בתגובה.
+
+    ‏`INSERT OR REPLACE` — ‏message_id בצ'אט הבעלים ייחודי, אבל טלגרם
+    עשויה למחזר מזהים בין בוטים, וכתיבה חוזרת עדיפה על כשל.
+    """
+    with get_connection() as conn:
+        conn.execute(
+            "INSERT OR REPLACE INTO owner_alert_targets "
+            "(owner_message_id, user_id, chat_id) VALUES (?, ?, ?)",
+            (int(owner_message_id), str(user_id), str(chat_id)),
+        )
+
+
+def get_owner_alert_target(owner_message_id: int) -> dict | None:
+    """הלקוח שההתראה עסקה בו, או None אם ההודעה אינה התראה שלנו."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT user_id, chat_id FROM owner_alert_targets "
+            "WHERE owner_message_id = ?",
+            (int(owner_message_id),),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+# ה-retention של הטבלה הזו חי ב-`purge_old_data` יחד עם כל השאר, ולא
+# בפונקציה נפרדת: שני מקומות שמוחקים מאותה טבלה מזמינים סטייה שקטה
+# כשמעדכנים רק אחד (‏CLAUDE.md → DB).
+
+
+# ─── מונים ל-digest היומי ────────────────────────────────────────────────
+
+
+def get_activity_counts(hours: int = 24) -> dict[str, int]:
+    """מונים לחלון האחרון — הבסיס ל-digest של הבעלים.
+
+    ‏`answered` — תשובות שהבוט שלח בפועל (‏`authored_by='bot'`), לא
+    הודעות נכנסות: זה מה שהבעלים רוצה לדעת שקרה בשמו.
+    ‏`waiting` — שיחות שמושתקות בגלל handoff, כלומר ממתינות לו ממש.
+    """
+    window = f"-{int(hours)} hours"
+    with get_connection() as conn:
+        def _count(sql: str, params: tuple = ()) -> int:
+            row = conn.execute(sql, params).fetchone()
+            return int(row["c"]) if row else 0
+
+        return {
+            "answered": _count(
+                "SELECT COUNT(*) AS c FROM conversations WHERE authored_by = 'bot' "
+                "AND created_at >= datetime('now', ?)", (window,),
+            ),
+            "incoming": _count(
+                "SELECT COUNT(*) AS c FROM conversations WHERE authored_by = 'customer' "
+                "AND created_at >= datetime('now', ?)", (window,),
+            ),
+            "customers": _count(
+                "SELECT COUNT(DISTINCT user_id) AS c FROM conversations "
+                "WHERE created_at >= datetime('now', ?)", (window,),
+            ),
+            "waiting": _count(
+                "SELECT COUNT(*) AS c FROM live_chats WHERE is_active = 1 "
+                "AND started_by = 'handoff'",
+            ),
+            "silenced": _count(
+                "SELECT COUNT(*) AS c FROM live_chats WHERE is_active = 1",
+            ),
+            "gaps": _count(
+                "SELECT COUNT(*) AS c FROM unanswered_questions WHERE status = 'open' "
+                "AND created_at >= datetime('now', ?)", (window,),
+            ),
+        }
+
+
 # ─── זיכרון לקוחות ───────────────────────────────────────────────────────
 
 
@@ -1028,6 +1132,7 @@ _USER_DATA_TABLES = (
     "unanswered_questions",
     "live_chats",
     "customer_facts",
+    "owner_alert_targets",
 )
 
 # טבלאות עם user_id שנשארות בכוונה: blocked_users — hold צר לאכיפה
@@ -1136,6 +1241,7 @@ def purge_old_data(
     conversation_days: int = 365,
     consent_ledger_years: int = 5,
     audit_months: int = 24,
+    alert_target_days: int = 30,
 ) -> dict:
     """‏retention אוטומטי — מחיקת נתונים ישנים לפי המדיניות.
 
@@ -1157,6 +1263,9 @@ def purge_old_data(
         ("consent_ledger_audit",
          "DELETE FROM consent_ledger WHERE category = 'audit' AND event_at < datetime('now', ?)",
          (f"-{int(audit_months)} months",)),
+        ("owner_alert_targets",
+         "DELETE FROM owner_alert_targets WHERE created_at < datetime('now', ?)",
+         (f"-{int(alert_target_days)} days",)),
     )
     for label, sql, params in deletions:
         try:

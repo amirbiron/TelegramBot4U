@@ -255,6 +255,7 @@ async def dispatch_result(bot, result, msg, conn: dict, display_name: str) -> No
         try:
             await owner_channel.notify_handoff(
                 bot, conn, display_name, result.handoff_reason,
+                target=(user_id, str(chat_id)),
             )
         except Exception:
             logger.error("התראת ה-handoff לבעלים נכשלה", exc_info=True)

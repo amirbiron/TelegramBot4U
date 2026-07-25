@@ -27,11 +27,12 @@ import database as db
 logger = logging.getLogger(__name__)
 
 
-def _timeout_minutes() -> int:
+def timeout_minutes() -> int:
     """‏timeout ההשתקה — נקרא בזמן ריצה כדי לכבד patches ושינויי env."""
     import config as _cfg
 
     return getattr(_cfg, "TAKEOVER_TIMEOUT_MINUTES", 120)
+
 
 
 def on_owner_message(chat_id: str, user_id: str = "", username: str = "") -> None:
@@ -58,7 +59,7 @@ def is_paused(chat_id: str) -> bool:
         return False
     # סגירה עצלה של sessions שפג תוקפם. ההשוואה נעשית ב-SQL מול
     # datetime('now') — שני הצדדים UTC, בלי תלות באזור הזמן של התהליך.
-    if db.end_expired_live_chats(_timeout_minutes()):
+    if db.end_expired_live_chats(timeout_minutes()):
         return db.get_active_live_chat(chat_id) is not None
     return True
 

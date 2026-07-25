@@ -21,6 +21,7 @@ from telegram.ext import (
     ApplicationBuilder,
     BusinessConnectionHandler,
     BusinessMessagesDeletedHandler,
+    CommandHandler,
     MessageHandler,
     filters,
 )
@@ -49,6 +50,20 @@ def register_handlers(app: Application) -> None:
         MessageHandler(filters.UpdateType.EDITED_BUSINESS_MESSAGE, on_edited_business_message)
     )
     app.add_handler(BusinessMessagesDeletedHandler(on_deleted_business_messages))
+
+    # פקודות הבעלים — **אחרי** ה-business handlers, וב-`message` רגיל
+    # בלבד. הצ'אט הזה הוא בוט↔בעלים, לא צ'אט לקוח: אין בו
+    # `business_connection_id`, ולכן הכלל "ללקוח אין פקודות" נשמר.
+    # ‏`filters.ChatType.PRIVATE` — בקבוצה שמישהו הוסיף את הבוט אליה
+    # אין לנו מה לעשות.
+    from bot.owner_commands import on_owner_command
+
+    app.add_handler(
+        CommandHandler(
+            ["pause", "resume", "status"], on_owner_command,
+            filters=filters.ChatType.PRIVATE,
+        )
+    )
 
 
 def create_business_application(token: str) -> Application:

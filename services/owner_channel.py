@@ -23,6 +23,8 @@ import logging
 import threading
 import time
 
+import database as db
+
 logger = logging.getLogger(__name__)
 
 # חלון הדה-דופ פר-סוג התראה (שניות). ‏handoff לא נכנס לכאן — כל פנייה
@@ -74,26 +76,46 @@ def reset_dedup() -> None:
         _last_sent.clear()
 
 
-async def _send(bot, conn: dict, text: str) -> bool:
+async def _send(
+    bot, conn: dict, text: str, target: tuple[str, str] | None = None,
+) -> bool:
     """שליחה בפועל לצ'אט הבעלים. מחזיר האם הצליח.
 
     **בלי** `business_connection_id` — זה הצ'אט של הבוט עם הבעלים.
     כשל אינו מפיל את הזרימה: התראה שלא נשלחה נרשמת ללוג, אבל ההודעה
     ללקוח (או השתיקה) כבר קרתה ואינה תלויה בה.
+
+    ‏`target` = ‏(user_id, chat_id) של הלקוח שההתראה עוסקת בו. כשהוא
+    נמסר, ה-message_id שחזר נשמר במיפוי — וזה מה שמאפשר לבעלים לענות
+    `/pause` בתגובה להתראה ולהשתיק את אותה שיחה בלבד.
     """
     chat_id = conn.get("user_chat_id")
     if not chat_id:
         logger.warning("owner_channel: אין user_chat_id לחיבור — ההתראה לא נשלחה")
         return False
     try:
-        await bot.send_message(chat_id=chat_id, text=text)
-        return True
+        sent = await bot.send_message(chat_id=chat_id, text=text)
     except Exception:
         logger.error("owner_channel: שליחת ההתראה לבעלים נכשלה", exc_info=True)
         return False
 
+    # רישום היעד נעשה **אחרי** שליחה מוצלחת ובנפרד: כשל בו לא הופך
+    # התראה שכבר הגיעה לבעלים ל"נכשלה". התוצאה של כשל כאן היא ש-`/pause`
+    # בתגובה לאותה הודעה ייפול ל-autopilot הגלובלי, לא שקט.
+    if target is not None:
+        message_id = getattr(sent, "message_id", None)
+        if message_id:
+            try:
+                db.record_owner_alert_target(message_id, target[0], target[1])
+            except Exception:
+                logger.error("owner_channel: רישום יעד ההתראה נכשל", exc_info=True)
+    return True
 
-async def notify(bot, conn: dict, text: str, kind: str = "", subject: str = "") -> bool:
+
+async def notify(
+    bot, conn: dict, text: str, kind: str = "", subject: str = "",
+    target: tuple[str, str] | None = None,
+) -> bool:
     """שליחת התראה לבעלים, בכפוף לדה-דופ לפי `kind`.
 
     ‏kind ריק ⇒ תמיד נשלח (אירוע ייחודי כמו handoff).
@@ -101,7 +123,7 @@ async def notify(bot, conn: dict, text: str, kind: str = "", subject: str = "") 
     if kind and not _should_send(kind, conn.get("connection_id", ""), subject):
         logger.info("owner_channel: התראה מסוג %s דוכאה (דה-דופ)", kind)
         return False
-    return await _send(bot, conn, text)
+    return await _send(bot, conn, text, target=target)
 
 
 # ─── ההתראות הקונקרטיות ──────────────────────────────────────────────────
@@ -156,8 +178,15 @@ async def notify_send_failed(bot, conn: dict, display_name: str, reason: str) ->
     )
 
 
-async def notify_handoff(bot, conn: dict, display_name: str, question: str) -> bool:
-    """הבוט לא ידע לענות והעביר לבעלים. **בלי דה-דופ** — כל פנייה נפרדת."""
+async def notify_handoff(
+    bot, conn: dict, display_name: str, question: str,
+    target: tuple[str, str] | None = None,
+) -> bool:
+    """הבוט לא ידע לענות והעביר לבעלים. **בלי דה-דופ** — כל פנייה נפרדת.
+
+    זו ההתראה שהבעלים הכי סביר יגיב עליה, ולכן `target` נמסר כאן:
+    ‏`/pause` בתגובה משתיק בדיוק את השיחה הזו.
+    """
     quoted = question.strip()
     if len(quoted) > 300:
         quoted = quoted[:300].rstrip() + "…"
@@ -166,6 +195,7 @@ async def notify_handoff(bot, conn: dict, display_name: str, question: str) -> b
         f"🔔 {display_name} שאל משהו שאין לי עליו תשובה:\n"
         f"«{quoted}»\n\n"
         "עניתי לו שאבדוק ואחזור. תענה לו ישירות בצ'אט — אני אשתוק שם.",
+        target=target,
     )
 
 
