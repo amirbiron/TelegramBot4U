@@ -260,6 +260,58 @@ class TestLedgerRetryDrain:
         assert result["conversations"] >= 0  # שאר המחיקות רצו
 
 
+# ─── crypto — מפתח הצפנה נדחה במקום להיגזר ─────────────────────────────
+class TestEncryptionKeyValidation:
+    """גזירת מפתח מסיסמה עם SHA-256 חשוף (בלי salt, בלי iterations) —
+    סיסמה קצרה נשברת ב-brute force וכל סודות ה-tenants נפתחים איתה."""
+
+    def _reset(self):
+        import utils.crypto as crypto
+
+        crypto._fernet_cache.clear()
+
+    def test_valid_fernet_key_is_accepted(self, monkeypatch):
+        import utils.crypto as crypto
+
+        self._reset()
+        key = crypto.generate_new_key()
+        monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", key)
+        assert crypto.decrypt_field(crypto.encrypt_field("סוד")) == "סוד"
+        self._reset()
+
+    @pytest.mark.parametrize(
+        "bad_key",
+        ["my-password", "1234", "לא-אסקי", "dG9vLXNob3J0", "x" * 44],
+    )
+    def test_non_fernet_key_is_rejected(self, monkeypatch, bad_key):
+        import utils.crypto as crypto
+
+        self._reset()
+        monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", bad_key)
+        with pytest.raises(crypto.EncryptionConfigError):
+            crypto.validate_key()
+        self._reset()
+
+    def test_startup_validation_reports_a_bad_key(self, monkeypatch):
+        import config as _cfg
+        import utils.crypto as crypto
+
+        self._reset()
+        monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", "not-a-fernet-key")
+        errors = _cfg.validate_config()
+        assert any("Fernet" in e for e in errors)
+        self._reset()
+
+    def test_missing_key_still_reported_separately(self, monkeypatch):
+        import config as _cfg
+
+        self._reset()
+        monkeypatch.delenv("SECRETS_ENCRYPTION_KEY", raising=False)
+        errors = _cfg.validate_config()
+        assert any("לא מוגדר" in e for e in errors)
+        self._reset()
+
+
 # ─── llm — גדר ה-KB גם בכשל טעינה ──────────────────────────────────────
 class TestKnowledgeBaseFence:
     """בלי הגדר, המודל מקבל פרסונה בלבד ועונה מהידע הכללי שלו על

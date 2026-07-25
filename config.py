@@ -449,11 +449,18 @@ def validate_config(*, require_bot: bool = False, require_admin: bool = False) -
             )
         if not ADMIN_SECRET_KEY:
             errors.append("ADMIN_SECRET_KEY לא מוגדר — sessions ו-CSRF לא מאובטחים")
-    from utils.crypto import is_encryption_configured
+    from utils.crypto import EncryptionConfigError, is_encryption_configured, validate_key
 
     if not is_encryption_configured():
         errors.append(
             "SECRETS_ENCRYPTION_KEY לא מוגדר — כתיבת סודות פלטפורמה חסומה "
             "(fail-closed)"
         )
+    else:
+        # מפתח פגום נראה "מוגדר" אבל נכשל בכתיבת הסוד הראשונה — כלומר
+        # אחרי שהמפעיל כבר חושב שהפריסה עלתה. עדיף להיכשל כאן.
+        try:
+            validate_key()
+        except EncryptionConfigError as exc:
+            errors.append(str(exc))
     return errors

@@ -15,7 +15,6 @@ Migration plan: encrypt_at_write בקוד, read_both_formats לתקופת מעב
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 
@@ -35,40 +34,42 @@ class EncryptionConfigError(RuntimeError):
 
 
 def _normalize_key(raw: str) -> bytes:
-    """מקבל מפתח מ-env (base64 או טקסט) ומחזיר bytes באורך תקין ל-Fernet.
+    """מאמת שהערך מ-env הוא מפתח Fernet תקין ומחזיר אותו כ-bytes.
 
-    Fernet דורש 32 בייט base64-encoded. אם המשתמש סיפק מחרוזת base64
-    תקינה — נשתמש בה ישירות. אחרת — נגזור 32 בייט מ-SHA256 של הטקסט
-    (גישה פשוטה למשתמשים שלא רוצים להתעסק עם base64 ידנית, אבל פחות
-    מומלצת — כי איכות המפתח תלויה באורך הקלט).
+    **למה לא גוזרים מפתח מסיסמה:** בגרסה קודמת היה כאן fallback רך —
+    מי שהדביק סיסמה רגילה קיבל `sha256(password)` כמפתח, בלי salt ובלי
+    iterations. זו איננה KDF: סיסמה קצרה נשברת ב-brute force מהיר, וכל
+    סודות ה-tenants (טוקן הבוט-הבן, סוד ה-webhook, מפתחות LLM) נפתחים
+    יחד איתה. הוספת PBKDF2 עם salt קבוע-לפריסה הייתה משפרת את המספרים
+    בלי לשנות את התמונה — המפתח עדיין נגזר מסוד באנטרופיה נמוכה.
+    לכן הפתרון הוא לדחות: מפתח שאינו `Fernet.generate_key()` הוא תצורה
+    שגויה, ותצורה שגויה בשכבת סודות **נכשלת סגור** ולא ממשיכה בשקט
+    (דפוס קריטי #9). ייצור מפתח: `python -m platform_cli gen-key`.
+
+    אין כאן עלות מיגרציה: הריפו טרם נפרס, ו-`.env.example` מבקש מפתח
+    Fernet מהיום הראשון.
     """
     raw = raw.strip()
     if not raw:
         raise EncryptionConfigError(
             "SECRETS_ENCRYPTION_KEY ריק. הגדר משתנה סביבה עם מפתח Fernet "
-            "תקין (Fernet.generate_key().decode())."
+            "תקין (python -m platform_cli gen-key)."
         )
 
-    # ניסיון ראשון: base64 תקין באורך 44 תווים (הפלט הסטנדרטי של Fernet.generate_key)
+    # הבנאי של Fernet הוא המאמת: הוא מפענח base64 urlsafe ודורש בדיוק
+    # 32 בייט. בכוונה לא מאמתים ידנית — `base64.urlsafe_b64decode` סלחני
+    # לתווים מחוץ לאלפבית, ו-`validate=True` לא קיים בגרסה ה-urlsafe.
     try:
-        decoded = base64.urlsafe_b64decode(raw.encode("ascii"))
-        if len(decoded) == 32:
-            return raw.encode("ascii")
+        key = raw.encode("ascii")
+        Fernet(key)
     except Exception as exc:
-        # לא מפתח Fernet תקני — ממשיכים ל-fallback של הגזירה. נרשם
-        # ללוג כי `except: pass` אסור, וכי זה בדיוק הרמז כשמישהו הדביק
-        # מפתח פגום ותוהה למה הסודות לא נפתחים.
-        logger.debug("SECRETS_ENCRYPTION_KEY אינו base64 תקין (%s)", type(exc).__name__)
-
-    # נפילה רכה: גזירה מ-SHA256 כדי לא לחסום את האפליקציה אם המשתמש סיפק
-    # סיסמה רגילה. עדיין עובד, אבל המפתח באיכות נמוכה יותר.
-    import hashlib
-    digest = hashlib.sha256(raw.encode("utf-8")).digest()
-    logger.warning(
-        "SECRETS_ENCRYPTION_KEY לא בפורמט Fernet סטנדרטי — נגזר מ-SHA256. "
-        "מומלץ להחליף ל-Fernet.generate_key() תקין."
-    )
-    return base64.urlsafe_b64encode(digest)
+        raise EncryptionConfigError(
+            "SECRETS_ENCRYPTION_KEY אינו מפתח Fernet תקין (נדרשות 32 בייט "
+            "ב-base64 urlsafe, 44 תווים). ייצור מפתח: "
+            "python -m platform_cli gen-key. שים לב: החלפת המפתח הופכת "
+            "סודות שכבר נשמרו לבלתי ניתנים לפענוח."
+        ) from exc
+    return key
 
 
 def _get_fernet(version: str = CURRENT_KEY_VERSION) -> Fernet:
@@ -88,6 +89,15 @@ def _get_fernet(version: str = CURRENT_KEY_VERSION) -> Fernet:
 def is_encryption_configured() -> bool:
     """בדיקה רכה — האם המפתח קיים. לא מעלה חריגה (משמש ב-startup checks)."""
     return bool(os.getenv("SECRETS_ENCRYPTION_KEY", "").strip())
+
+
+def validate_key(version: str = CURRENT_KEY_VERSION) -> None:
+    """מאמת את המפתח בעליית התהליך. מעלה EncryptionConfigError אם פגום.
+
+    ‏`is_encryption_configured` בודקת קיום בלבד; מפתח פגום היה מתגלה רק
+    בכתיבת הסוד הראשונה — אחרי שהמפעיל כבר חושב שהפריסה תקינה.
+    """
+    _get_fernet(version)
 
 
 # דגל שמתעד אם כבר היה log אזהרה ל-legacy mode (כתיבה בלי הצפנה).
