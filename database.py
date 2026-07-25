@@ -1166,6 +1166,19 @@ def purge_old_data(
         except Exception:
             logger.error("purge_old_data: כשל ב-%s", label, exc_info=True)
             result[label] = -1
+
+    # ניקוז תור ה-retry של ה-ledger. בלי קורא, `ledger_write_retry` היה
+    # מצטבר לנצח — וההבטחה במטריצת הפרטיות שהוא טבלה זמנית (עם user_id
+    # גלוי בתוך ה-payload!) לא הייתה מתקיימת. ה-job היומי הזה הוא הקורא.
+    try:
+        from utils.consent_ledger import process_ledger_retry_queue
+
+        for key, value in process_ledger_retry_queue().items():
+            result[f"ledger_retry_{key}"] = value
+    except Exception:
+        logger.error("purge_old_data: כשל בניקוז תור ה-ledger", exc_info=True)
+        result["ledger_retry_failed"] = -1
+
     logger.info("purge_old_data: %s", result)
     return result
 

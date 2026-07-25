@@ -23,12 +23,17 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent
 _DATA_DIR_DEFAULT = str(BASE_DIR / "data")
 
-# קודם .env בשורש (הגדרות בסיסיות כמו DATA_DIR), ואז DATA_DIR/.env עם
-# override — כדי שהגדרות שנשמרו לדיסק הקבוע (Render) ידרסו ברירות מחדל.
+# קודם .env בשורש (הגדרות בסיסיות כמו DATA_DIR), ואז DATA_DIR/.env —
+# קובץ אופציונלי על הדיסק הקבוע (Render), להגדרות שלא רוצים ב-repo.
+#
+# **בלי override**: משתני הסביבה של הפריסה גוברים על הקובץ. הריפו המקור
+# השתמש ב-override=True כי הפאנל שלו כתב לקובץ הזה בזמן ריצה; כאן אין
+# כותב כזה, ולכן ה-override היה נותן רק את הסיכון — סוד ישן שנשאר על
+# הדיסק היה גובר על סוד מסובב שהוגדר ב-env, בלי שום סימן.
 load_dotenv()
 _persistent_env = Path(os.getenv("DATA_DIR", _DATA_DIR_DEFAULT)).resolve() / ".env"
 if _persistent_env.exists():
-    load_dotenv(_persistent_env, override=True)
+    load_dotenv(_persistent_env)
 
 DATA_DIR = Path(os.getenv("DATA_DIR", _DATA_DIR_DEFAULT)).resolve()
 # ה-DB של ה-tenant של ברירת המחדל. ‏tenants אחרים: DATA_DIR/tenants/<slug>/
@@ -95,6 +100,10 @@ ADMIN_PASSWORD_HASH = os.getenv("ADMIN_PASSWORD_HASH", "")
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "")
 ADMIN_HOST = os.getenv("ADMIN_HOST", "0.0.0.0")
 ADMIN_PORT = int(os.getenv("ADMIN_PORT") or os.getenv("PORT") or "5000")
+# עוגיית הסשן נשלחת רק על HTTPS. לכבות רק לפיתוח מקומי על http://.
+ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "true").lower() in (
+    "true", "1", "yes",
+)
 
 # ─── דגלי פיצ'רים ────────────────────────────────────────────────────────
 # הזרמה "אנושית" של התשובה (sendMessageDraft). כבוי כברירת מחדל — ראה

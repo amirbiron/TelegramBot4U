@@ -40,7 +40,17 @@ ANTHROPIC_DEFAULT_MODEL = "claude-sonnet-5"
 # בודקים ("length" ⇒ קציצה ב-max_tokens, "stop" ⇒ סיום תקין).
 _STOP_REASON_MAP = {"end_turn": "stop", "max_tokens": "length"}
 
-_anthropic_client = None
+# ‏timeout מפורש לכל קריאה יוצאת. בלעדיו ה-SDK מחכה בברירת מחדל ארוכה
+# (דקות), וההודעה של הלקוח תקועה כל הזמן הזה: הצינור רץ ב-`to_thread`
+# מלולאת הבוט, ולכן קריאה תקועה מחזיקה thread **וגם** גורמת לטלגרם לשלוח
+# את העדכון שוב. עדיף להיכשל מהר וליפול ל-fallback.
+LLM_TIMEOUT_SECONDS = float(os.getenv("LLM_TIMEOUT_SECONDS", "45"))
+# סיווג כוונה הוא תיוג בלבד — אין סיבה להחזיק בגללו את הלקוח.
+INTENT_TIMEOUT_SECONDS = float(os.getenv("INTENT_TIMEOUT_SECONDS", "8"))
+
+# ‏cache של clients של Anthropic, ממופתח לפי המפתח בפועל (ראה
+# `get_anthropic_client` — ‏tenant יכול לספק מפתח משלו).
+_anthropic_clients: dict[str, object] = {}
 _anthropic_lock = threading.Lock()
 
 
@@ -60,49 +70,77 @@ def is_anthropic_configured() -> bool:
     return bool(os.getenv("ANTHROPIC_API_KEY", "").strip())
 
 
-def get_anthropic_client():
-    """Client של Anthropic — singleton עצל עם double-checked locking.
+def _tenant_anthropic_key(tenant: str) -> str:
+    """המפתח של ה-tenant מה-control plane ('' כשאין / כשהקריאה נכשלה)."""
+    from tenancy import DEFAULT_TENANT
 
-    נכשל בשימוש בלבד: חבילה חסרה / מפתח חסר ⇒ RuntimeError ברור, לא
-    קריסת boot.
+    if tenant == DEFAULT_TENANT:
+        return ""
+    try:
+        import control_plane as _cp
+
+        return _cp.get_tenant_secret(tenant, "anthropic_api_key") or ""
+    except Exception:
+        logger.error("קריאת מפתח Anthropic של ה-tenant נכשלה", exc_info=True)
+        return ""
+
+
+def get_anthropic_client(api_key: str = ""):
+    """Client של Anthropic — ‏cache ממופתח לפי המפתח בפועל.
+
+    **למה לא singleton יחיד:** ‏tenant יכול לספק מפתח משלו
+    (`anthropic_api_key` ב-control plane). ‏singleton ברמת מודול היה בונה
+    client אחד מה-env הגלובלי, ואז השימוש של אותו tenant היה מחויב על
+    חשבון מפתח הפלטפורמה — או נכשל לגמרי אם ה-env לא מוגדר בכלל, למרות
+    שיש לו מפתח תקין. ה-cache ממופתח לפי המפתח עצמו (ולא לפי tenant), כי
+    זו היחידה שקובעת את זהות ה-client, ו-tenants שחולקים מפתח חולקים
+    connection pool בלגיטימיות.
+
+    נכשל בשימוש בלבד: חבילה חסרה / מפתח חסר ⇒ RuntimeError ברור.
     """
-    global _anthropic_client
-    if _anthropic_client is None:
-        with _anthropic_lock:
-            if _anthropic_client is None:
-                if anthropic is None:
-                    raise RuntimeError(
-                        "חבילת anthropic אינה מותקנת — pip install anthropic"
-                    )
-                if not is_anthropic_configured():
-                    raise RuntimeError(
-                        "ANTHROPIC_API_KEY לא מוגדר — לא ניתן להשתמש בספק Claude"
-                    )
-                _anthropic_client = anthropic.Anthropic()
-    return _anthropic_client
+    if anthropic is None:
+        raise RuntimeError("חבילת anthropic אינה מותקנת — pip install anthropic")
+
+    key = (api_key or "").strip() or os.getenv("ANTHROPIC_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError(
+            "אין מפתח Anthropic (לא ל-tenant ולא ב-ANTHROPIC_API_KEY) — "
+            "לא ניתן להשתמש בספק Claude"
+        )
+
+    with _anthropic_lock:
+        client = _anthropic_clients.get(key)
+        if client is None:
+            client = anthropic.Anthropic(api_key=key, timeout=LLM_TIMEOUT_SECONDS)
+            _anthropic_clients[key] = client
+        return client
 
 
-def get_llm_provider_config() -> tuple[str, str]:
-    """(ספק, מודל) ל-tenant הנוכחי.
+def reset_clients() -> None:
+    """איפוס ה-cache — לטסטים ולרוטציית מפתחות."""
+    with _anthropic_lock:
+        _anthropic_clients.clear()
 
-    ‏tenant שיש לו סוד `anthropic_api_key` משלו — עובר ל-Claude. אחרת
-    ברירת המחדל של הפלטפורמה מ-env (‏LLM_PROVIDER / ‏LLM_MODEL).
+
+def get_llm_provider_config() -> tuple[str, str, str]:
+    """(ספק, מודל, מפתח) ל-tenant הנוכחי.
+
+    ‏tenant שיש לו סוד `anthropic_api_key` משלו — עובר ל-Claude **עם
+    המפתח שלו**. אחרת ברירת המחדל של הפלטפורמה מ-env.
     כשל בקריאת ה-control plane לא מפיל את השיחה — נופלים לברירת המחדל.
     """
     provider = os.getenv("LLM_PROVIDER", "").strip().lower()
     model = os.getenv("LLM_MODEL", "").strip()
+    api_key = ""
     try:
-        from tenancy import DEFAULT_TENANT, get_current_tenant
+        from tenancy import get_current_tenant
 
-        tenant = get_current_tenant()
-        if tenant != DEFAULT_TENANT:
-            import control_plane as _cp
-
-            if _cp.get_tenant_secret(tenant, "anthropic_api_key"):
-                provider = "claude"
+        api_key = _tenant_anthropic_key(get_current_tenant())
+        if api_key:
+            provider = "claude"
     except Exception:
         logger.error("get_llm_provider_config: כשל בקריאת הגדרת הספק", exc_info=True)
-    return provider, model
+    return provider, model, api_key
 
 
 def chat_complete(messages: list[dict], *, temperature: float, max_tokens: int) -> ChatResult:
@@ -111,9 +149,11 @@ def chat_complete(messages: list[dict], *, temperature: float, max_tokens: int) 
     חריגות לא נתפסות כאן (מלבד לוג בענף Claude) — הקוראים ב-llm.py
     עוטפים ב-try/except עם fallback מסודר.
     """
-    provider, model = get_llm_provider_config()
+    provider, model, api_key = get_llm_provider_config()
     if provider == "claude":
-        return _chat_complete_claude(messages, model=model, max_tokens=max_tokens)
+        return _chat_complete_claude(
+            messages, model=model, max_tokens=max_tokens, api_key=api_key,
+        )
     return _chat_complete_openai(messages, temperature=temperature, max_tokens=max_tokens)
 
 
@@ -144,6 +184,7 @@ def _chat_complete_openai(
         messages=messages,
         temperature=temperature,
         max_tokens=max_tokens,
+        timeout=LLM_TIMEOUT_SECONDS,
         **extra_kwargs,
     )
     choice = response.choices[0]
@@ -196,9 +237,11 @@ def _split_system_messages(messages: list[dict]) -> tuple[str, list[dict]]:
     return "\n\n".join(system_parts), turns
 
 
-def _chat_complete_claude(messages: list[dict], *, model: str, max_tokens: int) -> ChatResult:
-    """ענף Claude — Anthropic Messages API."""
-    client = get_anthropic_client()
+def _chat_complete_claude(
+    messages: list[dict], *, model: str, max_tokens: int, api_key: str = "",
+) -> ChatResult:
+    """ענף Claude — Anthropic Messages API, עם המפתח של ה-tenant."""
+    client = get_anthropic_client(api_key)
     _model = model or os.getenv("ANTHROPIC_MODEL", "").strip() or ANTHROPIC_DEFAULT_MODEL
     system_text, claude_messages = _split_system_messages(messages)
 
@@ -214,7 +257,8 @@ def _chat_complete_claude(messages: list[dict], *, model: str, max_tokens: int) 
 
     try:
         resp = client.messages.create(
-            model=_model, max_tokens=max_tokens, messages=claude_messages, **kwargs,
+            model=_model, max_tokens=max_tokens, messages=claude_messages,
+            timeout=LLM_TIMEOUT_SECONDS, **kwargs,
         )
     except anthropic.APIError as e:
         # base class של ה-SDK — לוג עם הקשר ואז re-raise אל ה-fallback

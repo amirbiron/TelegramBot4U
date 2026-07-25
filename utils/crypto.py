@@ -54,8 +54,11 @@ def _normalize_key(raw: str) -> bytes:
         decoded = base64.urlsafe_b64decode(raw.encode("ascii"))
         if len(decoded) == 32:
             return raw.encode("ascii")
-    except Exception:
-        pass
+    except Exception as exc:
+        # לא מפתח Fernet תקני — ממשיכים ל-fallback של הגזירה. נרשם
+        # ללוג כי `except: pass` אסור, וכי זה בדיוק הרמז כשמישהו הדביק
+        # מפתח פגום ותוהה למה הסודות לא נפתחים.
+        logger.debug("SECRETS_ENCRYPTION_KEY אינו base64 תקין (%s)", type(exc).__name__)
 
     # נפילה רכה: גזירה מ-SHA256 כדי לא לחסום את האפליקציה אם המשתמש סיפק
     # סיסמה רגילה. עדיין עובד, אבל המפתח באיכות נמוכה יותר.

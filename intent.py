@@ -60,11 +60,33 @@ _FAST_PATTERNS: list[tuple[Intent, re.Pattern]] = [
     (Intent.FAREWELL, _FAREWELL_PATTERN),
 ]
 
+# בקשה מפורשת לדבר עם אדם — **הכוונה היחידה עם השלכה פונקציונלית**
+# (`message_processor` כופה עליה handoff מיידי). שאר הכוונות הן תיוג בלבד.
+_HUMAN_AGENT_PATTERN = re.compile(
+    r"("
+    r"talk\s*to\s*(an?\s*)?(human|person|agent|representative|someone)"
+    r"|i\s*need\s*(an?\s*)?(human|person|agent)"
+    r"|can\s*i\s*(speak|talk)\s*(to|with)\s*(an?\s*)?(human|person|agent)"
+    r"|אדם\s*אמיתי"
+    r"|לדבר\s*עם\s*(מישהו|בנאדם|נציג|אדם|בעל\s*העסק|בעלים|הבעלים)"
+    r"|אני\s*רוצה\s*(לדבר\s*עם\s*)?(נציג|בנאדם|אדם|בעל\s*העסק|בעלים)"
+    r"|אפשר\s*לדבר\s*עם\s*(נציג|מישהו|בעל\s*העסק|בעלים)"
+    r"|מבקש\s*ש?(יחזרו|יחזור|בעל\s*העסק|מישהו)"
+    r"|ש(יחזרו|יחזור)\s*אלי"
+    r"|בעל\s*העסק\s*ש?י(חזור|תקשר)"
+    r")",
+    re.IGNORECASE,
+)
+
 
 # ─── Regex מלא — כל הכוונות ────────────────────────────────────────────
 _FALLBACK_PATTERNS: list[tuple[Intent, re.Pattern]] = [
     (Intent.GREETING, _GREETING_PATTERN),
     (Intent.FAREWELL, _FAREWELL_PATTERN),
+    # HUMAN_AGENT לפני כל דפוס התיוג: הוא היחיד שמייצר פעולה, ואסור
+    # שדפוס תיוג יגנוב אותו. "כמה יעלה לדבר עם בעל העסק?" מכיל גם מחיר
+    # וגם בקשה לאדם — הבקשה לאדם היא שמשנה מה קורה.
+    (Intent.HUMAN_AGENT, _HUMAN_AGENT_PATTERN),
     (
         Intent.BUSINESS_HOURS,
         re.compile(
@@ -89,24 +111,6 @@ _FALLBACK_PATTERNS: list[tuple[Intent, re.Pattern]] = [
             r"how\s*much|what.*price\b|what.*cost\b|pricing|price\s*list"
             r"|כמה\s*עולה|כמה\s*זה\s*עולה|מה\s*המחיר|מה\s*העלות|מחיר|מחירון|מחירים"
             r"|כמה\s*יעלה|כמה\s*כסף|עלות|תעריף|תעריפים"
-            r")",
-            re.IGNORECASE,
-        ),
-    ),
-    (
-        Intent.HUMAN_AGENT,
-        re.compile(
-            r"("
-            r"talk\s*to\s*(an?\s*)?(human|person|agent|representative|someone)"
-            r"|i\s*need\s*(an?\s*)?(human|person|agent)"
-            r"|can\s*i\s*(speak|talk)\s*(to|with)\s*(an?\s*)?(human|person|agent)"
-            r"|אדם\s*אמיתי"
-            r"|לדבר\s*עם\s*(מישהו|בנאדם|נציג|אדם|בעל\s*העסק|בעלים|הבעלים)"
-            r"|אני\s*רוצה\s*(לדבר\s*עם\s*)?(נציג|בנאדם|אדם|בעל\s*העסק|בעלים)"
-            r"|אפשר\s*לדבר\s*עם\s*(נציג|מישהו|בעל\s*העסק|בעלים)"
-            r"|מבקש\s*ש?(יחזרו|יחזור|בעל\s*העסק|מישהו)"
-            r"|ש(יחזרו|יחזור)\s*אלי"
-            r"|בעל\s*העסק\s*ש?י(חזור|תקשר)"
             r")",
             re.IGNORECASE,
         ),
@@ -219,6 +223,7 @@ def _detect_intent_llm(message: str) -> Intent:
     כל כשל — נופלים ל-regex המלא.
     """
     from config import INTENT_MODEL
+    from llm_client import INTENT_TIMEOUT_SECONDS
     from openai_client import get_openai_client
 
     try:
@@ -233,6 +238,8 @@ def _detect_intent_llm(message: str) -> Intent:
             tool_choice={"type": "function", "function": {"name": "classify_intent"}},
             temperature=0,
             max_tokens=50,
+            # timeout קצר: זו תווית בלבד, ואין סיבה שהלקוח יחכה בגללה
+            timeout=INTENT_TIMEOUT_SECONDS,
         )
         tool_calls = response.choices[0].message.tool_calls
         if not tool_calls:

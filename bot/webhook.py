@@ -41,7 +41,12 @@ def _verify_secret(tenant_id: str) -> bool:
         logger.error("ל-tenant %s אין סוד webhook רשום — הבקשה נדחית", tenant_id)
         return False
     received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-    return hmac.compare_digest(str(received), str(expected))
+    # השוואה על bytes: הכותרת נשלטת ע"י השולח, ו-compare_digest על `str`
+    # מרים TypeError על תו לא-ASCII — כלומר 500 במקום 403, ומסלול קריסה
+    # שאפשר להפעיל מבחוץ.
+    return hmac.compare_digest(
+        str(received).encode("utf-8"), str(expected).encode("utf-8")
+    )
 
 
 def register_webhook_routes(flask_app) -> None:
@@ -101,7 +106,9 @@ def register_webhook_routes(flask_app) -> None:
             logger.error("MANAGER_WEBHOOK_SECRET לא מוגדר — הבקשה נדחית")
             return ("", 403)
         received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
-        if not hmac.compare_digest(str(received), str(expected)):
+        if not hmac.compare_digest(
+            str(received).encode("utf-8"), str(expected).encode("utf-8")
+        ):
             logger.warning("webhook מנהל: סוד שגוי")
             return ("", 403)
 

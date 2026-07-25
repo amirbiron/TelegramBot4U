@@ -180,29 +180,26 @@ class TestPairingCodes:
         assert cp.consume_pairing_code(code, 43) is None
 
     def test_expired_code_rejected(self, tenant):
-        code = cp.create_pairing_code("acme", ttl_minutes=60)
-        # דוחפים את התפוגה לעבר במקום להמתין
-        with cp.get_platform_connection() as conn:
-            conn.execute(
-                "UPDATE pairing_codes SET expires_at = datetime('now', '-1 minute') "
-                "WHERE code = ?",
-                (code,),
-            )
+        # ‏TTL שלילי מייצר קוד שכבר פג — בלי להמתין ובלי לגעת ב-DB
+        # (ב-DB נשמר ה-hash, לא הקוד, אז UPDATE לפי הקוד לא היה תופס).
+        code = cp.create_pairing_code("acme", ttl_minutes=-1)
         assert cp.consume_pairing_code(code, 42) is None
 
     def test_unknown_code_rejected(self, tenant):
         assert cp.consume_pairing_code("does-not-exist", 42) is None
 
     def test_purge_expired(self, tenant):
-        code = cp.create_pairing_code("acme")
-        with cp.get_platform_connection() as conn:
-            conn.execute(
-                "UPDATE pairing_codes SET expires_at = datetime('now', '-1 hour') "
-                "WHERE code = ?",
-                (code,),
-            )
+        code = cp.create_pairing_code("acme", ttl_minutes=-60)
         assert cp.purge_expired_pairing_codes() == 1
         assert cp.get_pairing_code(code) is None
+
+    def test_code_is_stored_hashed(self, tenant):
+        """הקוד הוא credential — ‏platform.db לא מחזיק אותו בטקסט גלוי."""
+        code = cp.create_pairing_code("acme")
+        with cp.get_platform_connection() as conn:
+            stored = conn.execute("SELECT code FROM pairing_codes").fetchone()["code"]
+        assert stored != code
+        assert cp.get_pairing_code(code) is not None
 
 
 class TestAdminUsers:

@@ -40,9 +40,16 @@ def cmd_list_tenants(args) -> int:
 
 def cmd_create_tenant(args) -> int:
     cp.create_tenant(args.id, args.name)
-    # מפתח ה-webhook נוצר מיד — הוא הזהות של ה-route של הבוט-הבן
-    route_key = cp.generate_route_key()
-    cp.set_route("telegram_webhook_key", route_key, args.id)
+    try:
+        # מפתח ה-webhook נוצר מיד — הוא הזהות של ה-route של הבוט-הבן
+        route_key = cp.generate_route_key()
+        cp.set_route("telegram_webhook_key", route_key, args.id)
+    except Exception:
+        # בלי הגלגול אחורה, כשל כאן היה משאיר לקוח רשום בלי route:
+        # הרצה חוזרת נופלת על slug תפוס, והמפעיל תקוע במצב חלקי.
+        logger.error("רישום ה-route נכשל — מבטלים את יצירת הלקוח")
+        cp.delete_tenant(args.id, backup=False)
+        raise
     print(f"נוצר לקוח '{args.id}'.")
     print(f"נתיב ה-webhook שלו: /telegram/webhook/t/{route_key}")
     return 0
@@ -66,6 +73,12 @@ def cmd_list_secrets(args) -> int:
 
 
 def cmd_create_admin(args) -> int:
+    # ה-help מבטיח ש---tenant חובה ל-owner. האכיפה עצמה יושבת
+    # ב-control_plane (הוא זורק UnknownTenantError), אבל בדיקה מוקדמת
+    # נותנת הודעה מובנת במקום traceback על שדה שהמשתמש פשוט שכח.
+    if not args.platform_admin and not args.tenant:
+        print("--tenant חובה עבור משתמש owner.", file=sys.stderr)
+        return 1
     password = getpass.getpass("סיסמה (לא תוצג): ")
     if password != getpass.getpass("אימות סיסמה: "):
         print("הסיסמאות אינן תואמות.", file=sys.stderr)

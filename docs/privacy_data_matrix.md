@@ -36,7 +36,7 @@
 | `blocked_users` | חסימות שבעל העסק הגדיר | **כן** — מזהה בלבד | **נשאר** | — | נמוך | ‏hold צר לאכיפה (אינטרס לגיטימי): קטגוריה + מועד + דרך ערעור. אין תוכן הודעות. |
 | `bot_settings` | הגדרות ה-tenant: טון, ביטויים, פרומפט, כרטיס ביקור | לא | — | — | בינוני | `custom_prompt` ו-`custom_phrases` נכנסים לפרומפט; מקורם בעל העסק (פאנל מאומת), ולכן רק `custom_phrases` עובר סניטציה נגד injection. |
 | `consent_ledger` | ראיות מימוש זכויות (בקשת מחיקה, השלמתה) | **פסאודונימי** — `subject_hash` בלבד | **נשאר** | consent: 5 שנים · audit: 24 חודשים | נמוך | ‏HMAC עם pepper שחי ב-env נפרד (`LEDGER_PEPPER_V1`), לא ב-DB ולא במפתח ההצפנה. |
-| `ledger_write_retry` | payload של כתיבות ledger שנכשלו | **כן** — `user_id` גלוי בתוך ה-payload | נמחק בהצלחת ה-retry | — | בינוני | טבלה שאמורה להיות ריקה. רשומות בה = בעיה לפתור, לא מצב תקין. |
+| `ledger_write_retry` | payload של כתיבות ledger שנכשלו | **כן** — `user_id` גלוי בתוך ה-payload | נמחק בהצלחת ה-retry | עד `LEDGER_RETRY_MAX_ATTEMPTS` ניסיונות | בינוני | טבלה שאמורה להיות ריקה. רשומות בה = בעיה לפתור, לא מצב תקין. הקורא הוא `purge_old_data` (ה-job היומי), שמריץ את `process_ledger_retry_queue` ומחזיר את מוני ה-`ledger_retry_*`; בלעדיו הטבלה הייתה מצטברת לנצח וההבטחה ש"היא זמנית" לא הייתה מתקיימת. רשומה שמיצתה את הניסיונות נשארת ומדווחת בלוג עם `[LEDGER_RETRY_EXHAUSTED]` — טיפול ידני, לא מחיקה שקטה. |
 
 ## ‏Control plane — ‏`platform.db` (לא שייך לאף tenant)
 
@@ -48,7 +48,7 @@
 | `admin_users` | משתמשי הפאנל (בעלי עסקים ומנהלי פלטפורמה) | **כן** — אימייל | cascade | **גבוה** | `password_hash` (werkzeug) לעולם לא יוצא מהשכבה הזאת. אין self-registration. |
 | `managed_bots` | הבוטים-הבנים: מזהה, username, בעלים, סטטוס | **כן** — `owner_user_id` של בעל העסק | cascade | בינוני | ‏PII של הלקוח שלנו, לא של לקוח הקצה. |
 | `business_connections` | מצב חיבור ה-Secretary: הרשאות, ערוץ ניהול | **כן** — `owner_user_id`, `user_chat_id` | cascade | בינוני | `rights_json` מתעד אילו הרשאות ניתנו — ראיה למה מותר לנו לעשות. |
-| `pairing_codes` | קוד צימוד חד-פעמי (‏onboarding) | **כן** — `used_by_user_id` | cascade | בינוני | תפוגה שעה + חד-פעמיות. `purge_expired_pairing_codes` מנקה. |
+| `pairing_codes` | קוד צימוד חד-פעמי (‏onboarding) | **כן** — `used_by_user_id` | cascade | בינוני | תפוגה שעה + חד-פעמיות. `purge_expired_pairing_codes` מנקה. עמודת `code` מחזיקה **‏SHA-256 של הקוד ולא את הקוד עצמו**: הקוד הוא credential שמזכה את מי שמחזיק בו בצימוד ל-tenant, וקריאת הקובץ לא אמורה לאפשר צימוד. אין salt בכוונה — הקוד הוא 12 בייט אקראיים, וה-lookup הוא exact-match לפי מפתח ראשי. |
 | `platform_meta` | ערכי מטא תפעוליים (‏last-run של jobs) | לא | — | נמוך | — |
 
 ---

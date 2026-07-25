@@ -17,6 +17,7 @@ import hmac
 import json
 import logging
 import re
+import threading
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 from urllib.parse import urlparse
@@ -61,6 +62,10 @@ _LOGIN_MAX_ATTEMPTS = 5
 _LOGIN_WINDOW_SECONDS = 300
 _LOGIN_MAX_TRACKED_IPS = 1000
 _login_attempts: dict[str, list[float]] = {}
+# הפאנל רץ threaded=True: בלי מנעול, שני ניסיונות מקבילים דורסים זה את
+# רשימת השני (`_login_attempts[ip] = fresh`), המונה יורד מתחת לסף,
+# והגנת ה-brute force נחלשת בדיוק תחת התנאים שהיא נועדה להם.
+_login_lock = threading.Lock()
 
 
 # ─── פילטרים של Jinja ────────────────────────────────────────────────────
@@ -177,7 +182,13 @@ def _verify_admin_credentials(username: str, password: str) -> bool:
     """
     if not username or not password:
         return False
-    username_ok = hmac.compare_digest(str(username), str(_cfg.ADMIN_USERNAME))
+    # ‏compare_digest על `str` תומך ב-ASCII בלבד ומרים TypeError על כל תו
+    # אחר. שם משתמש או סיסמה בעברית היו מפילים את ה-route ל-500 במקום
+    # "פרטים שגויים" — כלומר גם באג פונקציונלי וגם oracle על הקלט.
+    # השוואה על bytes שומרת על זמן קבוע ומקבלת כל תו.
+    username_ok = hmac.compare_digest(
+        str(username).encode("utf-8"), str(_cfg.ADMIN_USERNAME).encode("utf-8")
+    )
     if _cfg.ADMIN_PASSWORD_HASH:
         try:
             password_ok = check_password_hash(_cfg.ADMIN_PASSWORD_HASH, str(password))
@@ -185,7 +196,9 @@ def _verify_admin_credentials(username: str, password: str) -> bool:
             logger.error("בדיקת ADMIN_PASSWORD_HASH נכשלה", exc_info=True)
             password_ok = False
     else:
-        password_ok = hmac.compare_digest(str(password), str(_cfg.ADMIN_PASSWORD))
+        password_ok = hmac.compare_digest(
+            str(password).encode("utf-8"), str(_cfg.ADMIN_PASSWORD).encode("utf-8")
+        )
     return username_ok and password_ok
 
 
@@ -193,29 +206,34 @@ def _check_login_rate_limit(ip: str) -> bool:
     """‏True אם ה-IP חרג ממגבלת ניסיונות ההתחברות."""
     import time
 
-    attempts = _login_attempts.get(ip)
-    if not attempts:
-        return False
     cutoff = time.time() - _LOGIN_WINDOW_SECONDS
-    fresh = [ts for ts in attempts if ts > cutoff]
-    if fresh:
+    with _login_lock:
+        attempts = _login_attempts.get(ip)
+        if not attempts:
+            return False
+        fresh = [ts for ts in attempts if ts > cutoff]
+        if not fresh:
+            _login_attempts.pop(ip, None)
+            return False
         _login_attempts[ip] = fresh
-    else:
-        del _login_attempts[ip]
-        return False
-    return len(fresh) >= _LOGIN_MAX_ATTEMPTS
+        return len(fresh) >= _LOGIN_MAX_ATTEMPTS
 
 
 def _record_login_attempt(ip: str) -> None:
-    """רישום ניסיון התחברות כושל, עם פינוי LRU."""
+    """רישום ניסיון התחברות כושל, עם פינוי לפי גיל.
+
+    הפינוי הוא לפי הניסיון **הישן ביותר** ולא לפי סדר ההכנסה: מילון
+    שומר סדר הכנסה, אבל ה-IP שהוכנס ראשון אינו בהכרח זה שלא נראה הכי
+    הרבה זמן.
+    """
     import time
 
-    if ip not in _login_attempts:
-        _login_attempts[ip] = []
-        if len(_login_attempts) > _LOGIN_MAX_TRACKED_IPS:
-            oldest_ip = next(iter(_login_attempts))
-            del _login_attempts[oldest_ip]
-    _login_attempts[ip].append(time.time())
+    now = time.time()
+    with _login_lock:
+        if ip not in _login_attempts and len(_login_attempts) >= _LOGIN_MAX_TRACKED_IPS:
+            stale_ip = min(_login_attempts, key=lambda k: _login_attempts[k][-1])
+            _login_attempts.pop(stale_ip, None)
+        _login_attempts.setdefault(ip, []).append(now)
 
 
 def _audit_log(action: str, details: str = "") -> None:
@@ -256,6 +274,10 @@ def create_admin_app() -> Flask:
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(days=30)
     app.config.setdefault("SESSION_COOKIE_HTTPONLY", True)
     app.config.setdefault("SESSION_COOKIE_SAMESITE", "Lax")
+    # ‏Secure כברירת מחדל: ה-ProxyFix עם x_proto מעיד על פריסה מאחורי TLS,
+    # ובלי הדגל עוגיית הסשן (ואיתה טוקן ה-CSRF) נשלחת גם על HTTP.
+    # פיתוח מקומי על http:// מכבה עם ADMIN_COOKIE_SECURE=false.
+    app.config.setdefault("SESSION_COOKIE_SECURE", _cfg.ADMIN_COOKIE_SECURE)
 
     csrf = CSRFProtect()
     csrf.init_app(app)

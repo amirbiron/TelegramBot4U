@@ -165,7 +165,14 @@ def _build_messages(
     persona = full_override or build_system_prompt(channel=channel)
 
     # ── 2. בסיס הידע המלא (שכבה B) ──
-    kb_section = ""
+    # **הבלוק הזה הוא הגדר של המודל.** אם הוא נשאר ריק, המודל מקבל
+    # פרסונה בלבד ועונה מהידע הכללי שלו על מחירים ושעות — כלומר ממציא.
+    # לכן גם ב-KB ריק וגם בכשל טעינה מזריקים איסור מפורש, ולא כלום.
+    empty_kb_notice = (
+        f"\n\n{ANCHOR_KB}\n"
+        "אין לך כרגע שום מידע עסקי. אל תענה על שאלות על מחירים, שעות, "
+        "מדיניות או שירותים — הפעל את כלל ההעברה לבעל העסק."
+    )
     try:
         kb = get_kb_context(top_hint=user_query)
         if kb.text:
@@ -176,12 +183,10 @@ def _build_messages(
                 f"{kb.text}"
             )
         else:
-            kb_section = (
-                f"\n\n{ANCHOR_KB}\n"
-                "בסיס הידע ריק כרגע — אין לך מידע עסקי לענות ממנו."
-            )
+            kb_section = empty_kb_notice
     except Exception:
         logger.error("כשל בטעינת בסיס הידע", exc_info=True)
+        kb_section = empty_kb_notice
 
     # ── 3. הגדרות ה-tenant ──
     settings_block = build_tenant_settings_block(
@@ -356,7 +361,15 @@ def generate_answer(
       kb_tokens       — אומדן טוקנים של ההקשר, ללוג
       llm_failed      — True כשהקריאה נכשלה וחזר FALLBACK_RESPONSE
     """
-    kb = get_kb_context(top_hint=user_query)
+    # הקריאה כאן היא לטובת המטא שבלוג בלבד — ההזרקה לפרומפט נעשית
+    # ב-`_build_messages`. כשל כאן לא אמור להפיל את התשובה: הגדר מוזרקת
+    # שם ממילא, ואם ניפול כאן הלקוח לא יקבל כלום.
+    try:
+        kb = get_kb_context(top_hint=user_query)
+        kb_empty, kb_tokens = kb.is_empty, kb.token_estimate
+    except Exception:
+        logger.error("כשל בקריאת מטא בסיס הידע", exc_info=True)
+        kb_empty, kb_tokens = True, 0
 
     conversation_summary = _get_conversation_summary(user_id) if user_id else None
 
@@ -374,7 +387,7 @@ def generate_answer(
             "LLM: model=%s finish_reason=%s prompt_tokens=%d completion_tokens=%d "
             "kb_tokens=%d chars=%d",
             result.model, result.finish_reason, result.prompt_tokens,
-            result.completion_tokens, kb.token_estimate, len(raw_answer),
+            result.completion_tokens, kb_tokens, len(raw_answer),
         )
         if result.finish_reason == "length":
             logger.warning(
@@ -385,14 +398,14 @@ def generate_answer(
         logger.error("קריאת ה-LLM נכשלה: %s", e)
         return {
             "answer": FALLBACK_RESPONSE,
-            "kb_empty": kb.is_empty,
-            "kb_tokens": kb.token_estimate,
+            "kb_empty": kb_empty,
+            "kb_tokens": kb_tokens,
             "llm_failed": True,
         }
 
     return {
         "answer": raw_answer,
-        "kb_empty": kb.is_empty,
-        "kb_tokens": kb.token_estimate,
+        "kb_empty": kb_empty,
+        "kb_tokens": kb_tokens,
         "llm_failed": False,
     }

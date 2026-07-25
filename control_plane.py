@@ -194,7 +194,8 @@ def init_platform_db() -> None:
 
             -- צימוד מוקדם: קושר owner_user_id ל-tenant לפני יצירת הבוט (PLAN §4.6).
             CREATE TABLE IF NOT EXISTS pairing_codes (
-                code            TEXT PRIMARY KEY,              -- secrets.token_urlsafe
+                -- ‏SHA-256 של הקוד, לא הקוד עצמו (ראה _hash_pairing_code)
+                code            TEXT PRIMARY KEY,
                 tenant_id       TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
                 created_at      TEXT NOT NULL DEFAULT (datetime('now')),
                 expires_at      TEXT NOT NULL,
@@ -261,12 +262,35 @@ def create_tenant(tenant_id: str, display_name: str, plan: str = "premium") -> N
     # אותו executescript + migrations כמו בכל עליית תהליך — לכל קובץ בנפרד).
     # שם העסק אינו נזרע ל-tenant DB — get_business_config גוזר אותו ישירות
     # מ-display_name של ה-control plane (מקור אמת יחיד).
+    # ‏compensating rollback: שורת ה-tenant כבר התקומיטה למעלה, ולכן כשל
+    # בבניית ה-data plane (הרשאות דיסק, דיסק מלא) היה משאיר רישום בלי
+    # נתונים — ‏tenant שמופיע כ-active, נכנס ללולאות ה-schedulers, וכל
+    # גישה לנתוניו נכשלת. גרוע מכך: קריאה חוזרת ל-create_tenant הייתה
+    # נופלת על TenantExistsError, כלומר מצב חלקי שאי אפשר לתקן בלי ידיים.
     db_file = tenant_db_path(tenant_id)
-    db_file.parent.mkdir(parents=True, exist_ok=True)
-    with tenant_context(tenant_id):
-        import database as db
+    try:
+        db_file.parent.mkdir(parents=True, exist_ok=True)
+        with tenant_context(tenant_id):
+            import database as db
 
-        db.init_db()
+            db.init_db()
+    except Exception:
+        logger.error(
+            "create_tenant(%s): בניית ה-data plane נכשלה — מבטלים את הרישום",
+            tenant_id, exc_info=True,
+        )
+        try:
+            with get_platform_connection() as conn:
+                conn.execute("DELETE FROM tenants WHERE tenant_id = ?", (tenant_id,))
+            invalidate_status_cache(tenant_id)
+        except Exception:
+            # ה-rollback עצמו נכשל — מדווחים בבירור, כי עכשיו באמת נדרשת
+            # התערבות ידנית, ולא בולעים את החריגה המקורית
+            logger.error(
+                "create_tenant(%s): גם ביטול הרישום נכשל — נדרש ניקוי ידני",
+                tenant_id, exc_info=True,
+            )
+        raise
 
     logger.info("tenant created: %s (%s)", tenant_id, display_name)
 
@@ -886,11 +910,29 @@ def disable_business_connection(connection_id: str) -> bool:
 PAIRING_CODE_TTL_MINUTES = 60
 
 
-def create_pairing_code(tenant_id: str, ttl_minutes: int = PAIRING_CODE_TTL_MINUTES) -> str:
-    """יצירת קוד צימוד חד-פעמי ל-tenant. מחזיר את הקוד.
+def _hash_pairing_code(code: str) -> str:
+    """‏SHA-256 של הקוד — מה שנשמר ב-DB.
 
-    הקוד נשמר ל-DB **לפני** שהוא מוצג/נשלח למשתמש (דפוס קריטי #9 —
-    credential נשמר לפני שנשלח, ‏fail closed).
+    **למה לא בטקסט גלוי:** הקוד הוא credential שמזכה את מי שמחזיק בו
+    בצימוד ל-tenant. כל שאר הסודות בקובץ הזה מוצפנים (`tenant_secrets`)
+    או מגובבים (`admin_users.password_hash`); קוד בטקסט גלוי היה מאפשר
+    למי שקורא את `platform.db` לצמוד את עצמו לכל לקוח עם קוד שטרם נוצל.
+    ה-lookup הוא exact-match, ולכן hash לא עולה כלום בפונקציונליות.
+
+    אין salt בכוונה: הקוד עצמו הוא 12 בייט אקראיים (‏token_urlsafe), כך
+    שאין מה לתקוף במילון, ו-salt היה מונע את ה-lookup לפי מפתח ראשי.
+    """
+    import hashlib
+
+    return hashlib.sha256((code or "").encode("utf-8")).hexdigest()
+
+
+def create_pairing_code(tenant_id: str, ttl_minutes: int = PAIRING_CODE_TTL_MINUTES) -> str:
+    """יצירת קוד צימוד חד-פעמי ל-tenant. מחזיר את הקוד **בטקסט גלוי**.
+
+    ב-DB נשמר ה-hash בלבד; הקוד הגלוי חוזר לקורא פעם אחת, להצגה ללקוח.
+    ההתמדה קורית **לפני** שהקוד מוצג (דפוס קריטי #9 — credential נשמר
+    לפני שנשלח, ‏fail closed).
     """
     if get_tenant(tenant_id) is None:
         raise UnknownTenantError(f"tenant לא רשום: {tenant_id}")
@@ -901,7 +943,7 @@ def create_pairing_code(tenant_id: str, ttl_minutes: int = PAIRING_CODE_TTL_MINU
     with get_platform_connection() as conn:
         conn.execute(
             "INSERT INTO pairing_codes (code, tenant_id, expires_at) VALUES (?, ?, ?)",
-            (code, tenant_id, expires_at),
+            (_hash_pairing_code(code), tenant_id, expires_at),
         )
     logger.info("pairing code created for tenant=%s (ttl=%dm)", tenant_id, ttl_minutes)
     return code
@@ -913,7 +955,7 @@ def get_pairing_code(code: str) -> Optional[dict]:
         return None
     with get_platform_connection() as conn:
         row = conn.execute(
-            "SELECT * FROM pairing_codes WHERE code = ?", (code,)
+            "SELECT * FROM pairing_codes WHERE code = ?", (_hash_pairing_code(code),)
         ).fetchone()
         return dict(row) if row else None
 
@@ -927,17 +969,18 @@ def consume_pairing_code(code: str, user_id: int) -> Optional[str]:
     code = (code or "").strip()
     if not code:
         return None
+    code_hash = _hash_pairing_code(code)
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
     with get_platform_connection() as conn:
         cur = conn.execute(
             "UPDATE pairing_codes SET used_at = ?, used_by_user_id = ? "
             "WHERE code = ? AND used_at IS NULL AND expires_at > ?",
-            (now, user_id, code, now),
+            (now, user_id, code_hash, now),
         )
         if cur.rowcount == 0:
             return None
         row = conn.execute(
-            "SELECT tenant_id FROM pairing_codes WHERE code = ?", (code,)
+            "SELECT tenant_id FROM pairing_codes WHERE code = ?", (code_hash,)
         ).fetchone()
         return row["tenant_id"] if row else None
 

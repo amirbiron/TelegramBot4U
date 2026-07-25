@@ -27,13 +27,8 @@ class TestBootstrap:
             assert db.count_kb_entries() == 1
 
     def test_purges_expired_pairing_codes(self, tenant):
-        code = cp.create_pairing_code("acme")
-        with cp.get_platform_connection() as conn:
-            conn.execute(
-                "UPDATE pairing_codes SET expires_at = datetime('now', '-1 hour') "
-                "WHERE code = ?",
-                (code,),
-            )
+        # ‏TTL שלילי במקום UPDATE ידני: ב-DB נשמר ה-hash של הקוד
+        code = cp.create_pairing_code("acme", ttl_minutes=-60)
         main.bootstrap()
         assert cp.get_pairing_code(code) is None
 
