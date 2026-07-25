@@ -410,5 +410,5 @@ CREATE TABLE IF NOT EXISTS pairing_codes (
 - ‏`docs/chatbot_build_guide.md` — שכבות ה-LLM, סכימת שיחות, זיכרון (לדלג על פרק ה-RAG).
 - ‏`docs/multi_tenant_migration_spec.md` — הרציונל של file-per-tenant ו-control plane. הפרויקט מתחיל מהנקודה שהמסמך מסתיים בה.
 - ‏`docs/privacy_data_matrix.md` + ‏`docs/legal/` — תבניות לציות.
-- ‏`CLAUDE.md` — כללי הפיתוח (migrations, ‏exceptions, טסט באותו commit) חלים כלשונם.
+- ‏`CLAUDE.md` — **לא חל כלשונו.** לריפו החדש נכתב `CLAUDE.md` מותאם: כללי הליבה (migrations, ‏exceptions, טסטים, ‏tenancy, דפוסי security) עוברים; כללי הדקורטורים, ה-RAG, ה-WhatsApp ומסך ההסכמה מוחלפים בכללי הערוץ החדש.
 - ‏`docs/rag_extraction_guide.md` — **לא רלוונטי יותר** (אין RAG); נשאר כרפרנס אם יידרש retrieval בעתיד מאחורי `get_kb_context`.
