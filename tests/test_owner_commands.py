@@ -34,6 +34,14 @@ class FakeMessage:
         return None
 
 
+def _replied(message_id: int, chat_id: int = OWNER_ID):
+    """‏double להודעה שהבעלים הגיב עליה — עם `chat`, כמו ב-API האמיתי."""
+    return type(
+        "RepliedMessage", (),
+        {"message_id": message_id, "chat": type("Chat", (), {"id": chat_id})()},
+    )()
+
+
 class FakeUpdate:
     def __init__(self, message):
         self.message = message
@@ -111,10 +119,13 @@ class TestPauseResume:
 class TestTargetedPause:
     """‏`/pause` בתגובה להתראה — משתיק שיחה אחת בלבד."""
 
-    def _record_alert(self, message_id: int = 4242):
+    def _record_alert(self, message_id: int = 4242, owner_chat: int = OWNER_ID):
         with tenant_context("acme"):
-            db.record_owner_alert_target(message_id, str(CUSTOMER_ID), CUSTOMER_CHAT)
-        return type("M", (), {"message_id": message_id})()
+            db.record_owner_alert_target(
+                message_id, str(CUSTOMER_ID), CUSTOMER_CHAT,
+                owner_chat_id=str(owner_chat),
+            )
+        return _replied(message_id, owner_chat)
 
     async def test_pause_in_reply_silences_only_that_chat(self, owner_chat):
         replied = self._record_alert()
@@ -137,7 +148,7 @@ class TestTargetedPause:
 
     async def test_reply_to_unknown_message_falls_back_to_global(self, owner_chat):
         """תגובה להודעה שאינה התראה שלנו — פעולה גלובלית, לא קריסה."""
-        replied = type("M", (), {"message_id": 999999})()
+        replied = _replied(999999)
         msg = await _run("/pause", reply_to=replied)
         with tenant_context("acme"):
             assert db.is_autopilot_enabled() is False
@@ -188,7 +199,9 @@ class TestAlertTargetMapping:
                 bot, conn, "דנה", "יש מלאי?", target=(str(CUSTOMER_ID), CUSTOMER_CHAT),
             )
             # ה-FakeBot מחזיר message_id עוקב
-            target = db.get_owner_alert_target(bot.messages[0]["message_id"])
+            target = db.get_owner_alert_target(
+                bot.messages[0]["message_id"], owner_chat_id=str(OWNER_ID),
+            )
         assert target == {"user_id": str(CUSTOMER_ID), "chat_id": CUSTOMER_CHAT}
 
     async def test_alert_without_target_records_nothing(self, owner_chat):
@@ -196,7 +209,9 @@ class TestAlertTargetMapping:
         conn = {"connection_id": CONNECTION_ID, "user_chat_id": OWNER_ID}
         with tenant_context("acme"):
             await owner_channel.notify_missing_permission(bot, conn)
-            assert db.get_owner_alert_target(bot.messages[0]["message_id"]) is None
+            assert db.get_owner_alert_target(
+                bot.messages[0]["message_id"], owner_chat_id=str(OWNER_ID),
+            ) is None
 
     async def test_send_failure_does_not_record(self, owner_chat):
         """אין התראה בצ'אט ⇒ אין למה להגיב ⇒ אין מיפוי."""
@@ -211,8 +226,8 @@ class TestAlertTargetMapping:
 
 class TestRetention:
     def test_purge_removes_old_mappings(self, default_tenant_db):
-        db.record_owner_alert_target(1, "u1", "c1")
-        db.record_owner_alert_target(2, "u2", "c2")
+        db.record_owner_alert_target(1, "u1", "c1", owner_chat_id="900001")
+        db.record_owner_alert_target(2, "u2", "c2", owner_chat_id="900001")
         with db.get_connection() as conn:
             conn.execute(
                 "UPDATE owner_alert_targets SET created_at = datetime('now', '-40 days') "
@@ -220,11 +235,11 @@ class TestRetention:
             )
         result = db.purge_old_data()
         assert result["owner_alert_targets"] == 1
-        assert db.get_owner_alert_target(1) is None
-        assert db.get_owner_alert_target(2) is not None
+        assert db.get_owner_alert_target(1, owner_chat_id="900001") is None
+        assert db.get_owner_alert_target(2, owner_chat_id="900001") is not None
 
     def test_delete_user_data_removes_mappings(self, default_tenant_db):
         db.upsert_user("u1", "דנה", inbound=True)
-        db.record_owner_alert_target(7, "u1", "c1")
+        db.record_owner_alert_target(7, "u1", "c1", owner_chat_id="900001")
         db.delete_user_data("u1")
-        assert db.get_owner_alert_target(7) is None
+        assert db.get_owner_alert_target(7, owner_chat_id="900001") is None

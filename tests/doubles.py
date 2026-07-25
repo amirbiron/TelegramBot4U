@@ -33,7 +33,15 @@ class FakeBot:
             "business_connection_id": business_connection_id,
             "message_id": self._next_message_id,
         })
-        return type("SentMessage", (), {"message_id": self._next_message_id})()
+        # ‏`Message` אמיתי נושא גם `chat` — ו-`owner_channel` נשען עליו
+        # כדי לרשום את חצי המפתח השני של מיפוי ההתראות.
+        return type(
+            "SentMessage", (),
+            {
+                "message_id": self._next_message_id,
+                "chat": type("Chat", (), {"id": chat_id})(),
+            },
+        )()
 
     async def send_chat_action(self, chat_id, action, business_connection_id=None, **kwargs):
         self.actions.append({

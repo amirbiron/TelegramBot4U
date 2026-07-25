@@ -183,8 +183,14 @@ async def send_to_customer(
         except TelegramError as exc:
             await _handle_send_failure(bot, exc, user_id, display_name, conn)
             return "\n\n".join(delivered)
-        except Exception:
+        except Exception as exc:
+            # כשל שאינו של טלגרם (תקלת תעבורה, timeout, באג אצלנו) —
+            # מבחינת הלקוח והבעלים הוא זהה לחלוטין לכשל של טלגרם: הלקוח
+            # לא קיבל תשובה. קודם הענף הזה רק כתב ללוג, כלומר ההודעה
+            # נעלמה בשקט: ה-DB לא סומן והבעלים לא ידע. ‏`classify_send_error`
+            # יסווג אותו כ-'other' — וזו בדיוק המשמעות.
             logger.error("שליחה ללקוח נכשלה מסיבה לא צפויה", exc_info=True)
+            await _handle_send_failure(bot, exc, user_id, display_name, conn)
             return "\n\n".join(delivered)
 
         delivered.append(chunk)
@@ -211,11 +217,15 @@ async def _handle_send_failure(
         return
     try:
         if reason == FAILURE_WINDOW_CLOSED:
-            await owner_channel.notify_window_closed(bot, conn, display_name)
+            await owner_channel.notify_window_closed(
+                bot, conn, display_name, user_id=user_id,
+            )
         elif reason == FAILURE_NO_PERMISSION:
             await owner_channel.notify_missing_permission(bot, conn)
         else:
-            await owner_channel.notify_send_failed(bot, conn, display_name, reason)
+            await owner_channel.notify_send_failed(
+                bot, conn, display_name, reason, user_id=user_id,
+            )
     except Exception:
         logger.error("התראת כשל השליחה לבעלים נכשלה", exc_info=True)
 

@@ -194,7 +194,9 @@ async def on_business_message(update, context) -> None:
 
     window = check_rate_limit(user_id)
     if window is not None:
-        await owner_channel.notify_rate_limited(context.bot, conn, display_name, window)
+        await owner_channel.notify_rate_limited(
+            context.bot, conn, display_name, window, user_id=user_id,
+        )
         return
 
     # 6 — אין הרשאת מענה ⇒ שקט + התראה
@@ -320,7 +322,7 @@ async def _handle_media(bot, msg, conn: dict, user_id: str, display_name: str,
             )
         except Exception:
             logger.error("שמירת מענה המדיה נכשלה", exc_info=True)
-    await owner_channel.notify_media(bot, conn, display_name)
+    await owner_channel.notify_media(bot, conn, display_name, user_id=user_id)
 
 
 def _schedule_summary(user_id: str) -> None:

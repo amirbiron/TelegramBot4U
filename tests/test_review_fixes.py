@@ -524,3 +524,160 @@ class TestTenantHasPaired:
         code = platform_db.create_pairing_code(tenant)
         platform_db.consume_pairing_code(code, 4242)
         assert platform_db.tenant_has_paired(tenant) is True
+
+
+# ─── סבב שלישי — ממצאים על שלב 3 ───────────────────────────────────────
+class TestNonTelegramSendFailure:
+    """כשל שאינו של טלגרם נבלע בשקט: הלקוח לא קיבל תשובה, ה-DB לא סומן,
+    והבעלים לא ידע."""
+
+    async def test_generic_exception_marks_and_notifies(self, default_tenant_db):
+        import database as db
+        from bot import dispatch
+        from services import owner_channel
+        from tests.doubles import FakeBot
+
+        owner_channel.reset_dedup()
+        # ‏TimeoutError אינו TelegramError — קודם הוא נפל לענף שרק לוגג
+        bot = FakeBot(fail_send=TimeoutError("החיבור נתקע"))
+        db.upsert_user("1", "דנה", inbound=True)
+        conn = {"connection_id": "conn-1", "user_chat_id": 999}
+
+        sent = await dispatch.send_to_customer(
+            bot, 10, "conn-1", "שלום", "1", "דנה", conn,
+        )
+
+        assert sent == ""
+        assert db.get_user("1")["send_failure_reason"] == dispatch.FAILURE_OTHER
+        assert bot.customer_messages == []
+        assert len(bot.owner_messages) == 1
+
+    async def test_without_conn_it_still_marks_the_db(self, default_tenant_db):
+        import database as db
+        from bot import dispatch
+        from tests.doubles import FakeBot
+
+        bot = FakeBot(fail_send=OSError("שקע נסגר"))
+        db.upsert_user("1", "דנה", inbound=True)
+        await dispatch.send_to_customer(bot, 10, "conn-1", "שלום", "1", "דנה")
+        assert db.get_user("1")["send_failure_reason"] == dispatch.FAILURE_OTHER
+
+
+class TestDedupKeyIsTheUserId:
+    """שם תצוגה אינו ייחודי — שתי 'דנה' היו חולקות מפתח דה-דופ,
+    וההתראה על השנייה הייתה נבלעת."""
+
+    async def test_same_name_different_customers_both_notify(self, default_tenant_db):
+        from services import owner_channel
+        from tests.doubles import FakeBot
+
+        owner_channel.reset_dedup()
+        bot = FakeBot()
+        conn = {"connection_id": "conn-1", "user_chat_id": 999}
+
+        first = await owner_channel.notify_send_failed(
+            bot, conn, "דנה", "other", user_id="111",
+        )
+        second = await owner_channel.notify_send_failed(
+            bot, conn, "דנה", "other", user_id="222",
+        )
+        assert first is True
+        assert second is True, "לקוח שני עם אותו שם — ההתראה עליו נבלעה"
+
+    async def test_same_customer_is_still_deduped(self, default_tenant_db):
+        from services import owner_channel
+        from tests.doubles import FakeBot
+
+        owner_channel.reset_dedup()
+        bot = FakeBot()
+        conn = {"connection_id": "conn-1", "user_chat_id": 999}
+
+        await owner_channel.notify_send_failed(bot, conn, "דנה", "other", user_id="111")
+        again = await owner_channel.notify_send_failed(
+            bot, conn, "דנה", "other", user_id="111",
+        )
+        assert again is False
+
+    def test_subject_falls_back_to_the_name(self):
+        """בלי user_id עדיף דה-דופ גס על היעדר דה-דופ."""
+        from services.owner_channel import _subject
+
+        assert _subject("", "דנה") == "דנה"
+        assert _subject("  ", "דנה") == "דנה"
+        assert _subject("111", "דנה") == "111"
+
+    @pytest.mark.parametrize(
+        "fn_name", ["notify_rate_limited", "notify_window_closed",
+                    "notify_send_failed", "notify_media"],
+    )
+    def test_every_per_customer_notification_takes_a_user_id(self, fn_name):
+        """התראה חדשה פר-לקוח שתשכח את הפרמטר תיפול כאן."""
+        import inspect
+
+        from services import owner_channel
+
+        params = inspect.signature(getattr(owner_channel, fn_name)).parameters
+        assert "user_id" in params
+
+
+class TestAlertTargetIsChatScoped:
+    """‏message_id של טלגרם ייחודי פר-צ'אט. מפתח בלעדיו = `/pause`
+    בתגובה להתראה אחת משתיק את הלקוח של התראה אחרת."""
+
+    def test_same_message_id_in_two_chats_stays_separate(self, default_tenant_db):
+        import database as db
+
+        db.record_owner_alert_target(500, "user-a", "chat-a", owner_chat_id="owner-1")
+        db.record_owner_alert_target(500, "user-b", "chat-b", owner_chat_id="owner-2")
+
+        first = db.get_owner_alert_target(500, owner_chat_id="owner-1")
+        second = db.get_owner_alert_target(500, owner_chat_id="owner-2")
+        assert first["user_id"] == "user-a"
+        assert second["user_id"] == "user-b"
+
+    def test_wrong_chat_returns_nothing(self, default_tenant_db):
+        import database as db
+
+        db.record_owner_alert_target(500, "user-a", "chat-a", owner_chat_id="owner-1")
+        assert db.get_owner_alert_target(500, owner_chat_id="owner-9") is None
+
+    async def test_send_records_the_chat_it_actually_sent_to(self, default_tenant_db):
+        import database as db
+        from services import owner_channel
+        from tests.doubles import FakeBot
+
+        bot = FakeBot()
+        conn = {"connection_id": "conn-1", "user_chat_id": 777}
+        await owner_channel.notify_handoff(
+            bot, conn, "דנה", "שאלה", target=("u1", "c1"),
+        )
+        message_id = bot.messages[0]["message_id"]
+        assert db.get_owner_alert_target(message_id, owner_chat_id="777") is not None
+
+
+class TestOwnerRepliesHaveNoMarkdown:
+    """אין `parse_mode` בריפו — סימני Markdown היו מוצגים ככוכביות."""
+
+    def _texts(self) -> list[str]:
+        import ast
+        import pathlib
+
+        source = pathlib.Path("bot/owner_commands.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        out = []
+        for node in ast.walk(tree):
+            # רק גוף הפונקציות — ה-docstring של המודול מותר בהדגשות
+            if isinstance(node, ast.FunctionDef) and node.name.startswith("_cmd_"):
+                for sub in ast.walk(node):
+                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                        out.append(sub.value)
+        return out
+
+    def test_no_bold_markers_in_replies(self):
+        offenders = [t for t in self._texts() if "**" in t]
+        assert not offenders, f"סימני Markdown בהודעה לבעלים: {offenders}"
+
+    @pytest.mark.parametrize("marker", ["__", "`"])
+    def test_no_other_markdown_markers(self, marker):
+        offenders = [t for t in self._texts() if marker in t]
+        assert not offenders, f"סימני Markdown ({marker}) בהודעה לבעלים: {offenders}"

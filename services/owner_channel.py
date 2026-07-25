@@ -70,6 +70,19 @@ def _should_send(kind: str, connection_id: str, subject: str = "") -> bool:
     return True
 
 
+def _subject(user_id: str, display_name: str) -> str:
+    """מפתח הדה-דופ של הלקוח — מזהה, לא שם.
+
+    שם תצוגה אינו ייחודי: שתי "דנה" שונות היו חולקות מפתח, וההתראה על
+    השנייה הייתה נבלעת בחלון של הראשונה — כלומר הבעלים לא היה יודע
+    שלקוח שלם לא קיבל תשובה. השם נשאר בגוף ההודעה, כי שם הוא מה
+    שמובן לבעלים; המפתח הוא ה-user_id.
+
+    ‏fallback לשם כשאין מזהה: עדיף דה-דופ גס על היעדר דה-דופ.
+    """
+    return str(user_id).strip() or display_name
+
+
 def reset_dedup() -> None:
     """איפוס מצב הדה-דופ — לטסטים בלבד."""
     with _lock:
@@ -105,8 +118,13 @@ async def _send(
     if target is not None:
         message_id = getattr(sent, "message_id", None)
         if message_id:
+            # ה-chat_id נלקח מההודעה שחזרה ולא מ-`conn`: זה הצ'אט
+            # שטלגרם באמת שלחה אליו, והוא חצי מהמפתח.
+            sent_chat = getattr(getattr(sent, "chat", None), "id", None) or chat_id
             try:
-                db.record_owner_alert_target(message_id, target[0], target[1])
+                db.record_owner_alert_target(
+                    message_id, target[0], target[1], owner_chat_id=str(sent_chat),
+                )
             except Exception:
                 logger.error("owner_channel: רישום יעד ההתראה נכשל", exc_info=True)
     return True
@@ -132,7 +150,9 @@ async def notify(
 # ועם המשפט שאומר לו מה לעשות עכשיו.
 
 
-async def notify_rate_limited(bot, conn: dict, display_name: str, window: str) -> bool:
+async def notify_rate_limited(
+    bot, conn: dict, display_name: str, window: str, user_id: str = "",
+) -> bool:
     """לקוח חרג ממגבלת הקצב — הוא לא קיבל שום הודעה."""
     window_he = {"minute": "בדקה", "hour": "בשעה", "day": "ביום"}.get(window, "")
     return await notify(
@@ -140,7 +160,7 @@ async def notify_rate_limited(bot, conn: dict, display_name: str, window: str) -
         f"⏸️ {display_name} שלח הרבה הודעות ברצף ({window_he}), "
         "ולכן הפסקתי לענות לו לעכשיו. הוא לא קיבל שום הודעה על כך. "
         "אם זה נראה לך לגיטימי — כדאי שתענה לו בעצמך.",
-        kind="rate_limited", subject=display_name,
+        kind="rate_limited", subject=_subject(user_id, display_name),
     )
 
 
@@ -156,7 +176,9 @@ async def notify_missing_permission(bot, conn: dict) -> bool:
     )
 
 
-async def notify_window_closed(bot, conn: dict, display_name: str) -> bool:
+async def notify_window_closed(
+    bot, conn: dict, display_name: str, user_id: str = "",
+) -> bool:
     """חלון 24 השעות נסגר — אי אפשר לענות עד שהלקוח יכתוב שוב."""
     return await notify(
         bot, conn,
@@ -164,17 +186,19 @@ async def notify_window_closed(bot, conn: dict, display_name: str) -> bool:
         "ההודעה האחרונה שלו, וטלגרם לא מרשה לי לכתוב בשמך בצ'אט שלא היה "
         "פעיל. זו מגבלה של טלגרם, לא תקלה.\n"
         "אם זה דחוף — כתוב לו בעצמך מהצ'אט.",
-        kind="window_closed", subject=display_name,
+        kind="window_closed", subject=_subject(user_id, display_name),
     )
 
 
-async def notify_send_failed(bot, conn: dict, display_name: str, reason: str) -> bool:
+async def notify_send_failed(
+    bot, conn: dict, display_name: str, reason: str, user_id: str = "",
+) -> bool:
     """כשל שליחה שלא סווג — הבעלים צריך לדעת שהלקוח לא קיבל תשובה."""
     return await notify(
         bot, conn,
         f"⚠️ ניסיתי לענות ל{display_name} וזה לא עבר ({reason}). "
         "הוא לא קיבל תשובה — כדאי שתסתכל.",
-        kind="send_failed", subject=display_name,
+        kind="send_failed", subject=_subject(user_id, display_name),
     )
 
 
@@ -199,13 +223,15 @@ async def notify_handoff(
     )
 
 
-async def notify_media(bot, conn: dict, display_name: str) -> bool:
+async def notify_media(
+    bot, conn: dict, display_name: str, user_id: str = "",
+) -> bool:
     """הגיעה הודעת מדיה — לא שומרים אותה ולא מנסים להבין (מזעור)."""
     return await notify(
         bot, conn,
         f"📎 {display_name} שלח לך קובץ או הקלטה. אני לא יודע לקרוא כאלה, "
         "אז עניתי לו משפט קצר שתחזור אליו.",
-        kind="media", subject=display_name,
+        kind="media", subject=_subject(user_id, display_name),
     )
 
 

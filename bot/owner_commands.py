@@ -13,6 +13,11 @@
 משתמש אחר — **שתיקה מוחלטת**, לא הודעת שגיאה: מי שמצא את הבוט לא צריך
 לדעת שהוא בוט עסקי של מישהו, ומה הפקודות שלו.
 
+**בלי עיצוב:** ההודעות נשלחות בלי `parse_mode` — זו המוסכמה בכל
+הריפו, והיא מה שמבטיח שתו מיוחד או טוקן שדלף יוצג כטקסט גולמי
+במקום לשבור את ההודעה או להיעלם. לכן אין כאן `**הדגשה**`: היא הייתה
+מוצגת ללקוח כככוכביות. ההדגשה נעשית בניסוח ובאימוג'י.
+
 **‏`/pause` ממוקד:** הבעלים עונה `/pause` **בתגובה** להתראה על לקוח
 מסוים ⇒ מושתקת רק אותה שיחה. בלי reply ⇒ ה-autopilot הגלובלי נכבה.
 המיפוי מהתראה ללקוח יושב ב-`owner_alert_targets` (‏`owner_channel`
@@ -61,8 +66,14 @@ def _reply_target(msg) -> dict | None:
     message_id = getattr(replied, "message_id", None)
     if not message_id:
         return None
+    # ה-chat_id הוא חצי מהמפתח: ‏message_id של טלגרם ייחודי פר-צ'אט
+    # בלבד, ובלעדיו תגובה בצ'אט אחד הייתה יכולה להתאים לרשומה של צ'אט
+    # אחר — כלומר להשתיק את הלקוח הלא נכון.
+    owner_chat_id = getattr(getattr(replied, "chat", None), "id", None)
+    if owner_chat_id is None:
+        return None
     try:
-        return db.get_owner_alert_target(message_id)
+        return db.get_owner_alert_target(message_id, owner_chat_id=str(owner_chat_id))
     except Exception:
         logger.error("owner_commands: כשל בקריאת יעד ההתראה", exc_info=True)
         return None
@@ -122,7 +133,7 @@ def _cmd_pause(msg, conn: dict) -> str:
 
     db.set_autopilot_enabled(False)
     return (
-        "כיביתי את המענה האוטומטי — **בכל** השיחות. אני עדיין קורא ושומר "
+        "⏸️ כיביתי את המענה האוטומטי — בכל השיחות. אני עדיין קורא ושומר "
         "הכול, אבל לא עונה לאף אחד.\n"
         "‏/resume כדי להחזיר אותי.\n\n"
         "רק רצית להשתיק שיחה אחת? ענה /pause בתגובה להתראה על אותו לקוח."
@@ -150,13 +161,13 @@ def _cmd_status(msg, conn: dict) -> str:
     if conn.get("is_enabled"):
         lines.append("• מחובר לחשבון שלך ✅")
     else:
-        lines.append("• **לא מחובר** — החיבור בוטל בהגדרות טלגרם ❌")
+        lines.append("• לא מחובר ❌ — החיבור בוטל בהגדרות טלגרם")
 
     if conn.get("can_reply"):
         lines.append("• מותר לי לענות בשמך ✅")
     else:
         lines.append(
-            "• **אין לי הרשאה לענות** ❌ — הגדרות טלגרם ← Chatbots ← "
+            "• אין לי הרשאה לענות ❌ — הגדרות טלגרם ← Chatbots ← "
             "לבחור אותי ← לאשר מענה להודעות"
         )
 
@@ -168,7 +179,7 @@ def _cmd_status(msg, conn: dict) -> str:
         return "\n".join(lines) + "\n\nלא הצלחתי לקרוא את המונים כרגע."
 
     lines.append(
-        "• מענה אוטומטי: " + ("דלוק ✅" if autopilot else "**כבוי** ⏸️ (‏/resume)")
+        "• מענה אוטומטי: " + ("דלוק ✅" if autopilot else "כבוי ⏸️ (‏/resume)")
     )
     lines.append("")
     lines.append("ב-24 השעות האחרונות:")

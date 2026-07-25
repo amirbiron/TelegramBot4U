@@ -197,12 +197,19 @@ def init_db():
             -- את message_id של ההודעה שהוא הגיב לה, ואין ממנו דרך חזרה
             -- ללקוח.
             --
-            -- ‏natural key: ‏message_id בצ'אט הבעלים (ייחודי פר-בוט).
+            -- ‏natural key: ‏(owner_chat_id, owner_message_id). ‏message_id
+            -- של טלגרם ייחודי **פר-צ'אט**, לא פר-בוט: ל-tenant יכולים
+            -- להיות כמה חיבורים (חיבור מחדש מחשבון אחר), ואז שני צ'אטים
+            -- של בעלים באותו DB — ומזהי ההודעות בהם מתנגשים. מפתח על
+            -- ה-message_id בלבד היה גורם ל-`/pause` בתגובה להתראה אחת
+            -- להשתיק את הלקוח של התראה אחרת לגמרי.
             CREATE TABLE IF NOT EXISTS owner_alert_targets (
-                owner_message_id INTEGER PRIMARY KEY,
+                owner_chat_id    TEXT NOT NULL,
+                owner_message_id INTEGER NOT NULL,
                 user_id          TEXT NOT NULL,
                 chat_id          TEXT NOT NULL,
-                created_at       TEXT DEFAULT (datetime('now'))
+                created_at       TEXT DEFAULT (datetime('now')),
+                PRIMARY KEY (owner_chat_id, owner_message_id)
             );
             CREATE INDEX IF NOT EXISTS idx_alert_targets_user
                 ON owner_alert_targets(user_id);
@@ -993,27 +1000,32 @@ def set_autopilot_enabled(enabled: bool) -> None:
 # ─── מיפוי התראה לבעלים ⇐ לקוח ───────────────────────────────────────────
 
 
-def record_owner_alert_target(owner_message_id: int, user_id: str, chat_id: str) -> None:
+def record_owner_alert_target(
+    owner_message_id: int, user_id: str, chat_id: str, owner_chat_id: str = "",
+) -> None:
     """שמירת היעד של התראה שנשלחה לבעלים, לצורך `/pause` בתגובה.
 
-    ‏`INSERT OR REPLACE` — ‏message_id בצ'אט הבעלים ייחודי, אבל טלגרם
-    עשויה למחזר מזהים בין בוטים, וכתיבה חוזרת עדיפה על כשל.
+    ‏`owner_chat_id` הוא חלק מהמפתח: ‏message_id ייחודי פר-צ'אט בלבד
+    (ראה ההערה בסכימה). ‏`INSERT OR REPLACE` כי טלגרם ממחזרת מזהים
+    לאורך זמן, וכתיבה חוזרת עדיפה על כשל.
     """
     with get_connection() as conn:
         conn.execute(
             "INSERT OR REPLACE INTO owner_alert_targets "
-            "(owner_message_id, user_id, chat_id) VALUES (?, ?, ?)",
-            (int(owner_message_id), str(user_id), str(chat_id)),
+            "(owner_chat_id, owner_message_id, user_id, chat_id) VALUES (?, ?, ?, ?)",
+            (str(owner_chat_id), int(owner_message_id), str(user_id), str(chat_id)),
         )
 
 
-def get_owner_alert_target(owner_message_id: int) -> dict | None:
+def get_owner_alert_target(
+    owner_message_id: int, owner_chat_id: str = "",
+) -> dict | None:
     """הלקוח שההתראה עסקה בו, או None אם ההודעה אינה התראה שלנו."""
     with get_connection() as conn:
         row = conn.execute(
             "SELECT user_id, chat_id FROM owner_alert_targets "
-            "WHERE owner_message_id = ?",
-            (int(owner_message_id),),
+            "WHERE owner_chat_id = ? AND owner_message_id = ?",
+            (str(owner_chat_id), int(owner_message_id)),
         ).fetchone()
         return dict(row) if row else None
 
