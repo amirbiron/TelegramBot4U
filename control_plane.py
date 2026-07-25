@@ -942,6 +942,27 @@ def consume_pairing_code(code: str, user_id: int) -> Optional[str]:
         return row["tenant_id"] if row else None
 
 
+def get_tenant_by_paired_user(user_id: int) -> Optional[str]:
+    """ה-tenant שהמשתמש צומד אליו — לפי הקוד האחרון שהוא ניצל.
+
+    זו ההתאמה שמאפשרת לקשור `managed_bot` update ל-tenant: טלגרם אומרת
+    מי המשתמש היוצר, אבל לא לאיזה עסק הוא שייך אצלנו. הצימוד קורה
+    **לפני** יצירת הבוט, בדיוק בשביל זה (‏PLAN §4.6).
+
+    אין טבלת מיפוי נפרדת: `pairing_codes.used_by_user_id` הוא כבר
+    הרישום, וטבלה נוספת הייתה מקור אמת שני שיכול לסטות.
+    """
+    if not platform_db_path().exists():
+        return None
+    with get_platform_connection() as conn:
+        row = conn.execute(
+            "SELECT tenant_id FROM pairing_codes WHERE used_by_user_id = ? "
+            "ORDER BY used_at DESC, code LIMIT 1",
+            (int(user_id),),
+        ).fetchone()
+        return row["tenant_id"] if row else None
+
+
 def purge_expired_pairing_codes() -> int:
     """ניקוי קודים שפג תוקפם ולא נוצלו. מחזיר כמה נמחקו."""
     if not platform_db_path().exists():

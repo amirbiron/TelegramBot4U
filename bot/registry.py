@@ -135,11 +135,73 @@ async def dispatch_update(tenant_id: str, update_data: dict) -> None:
         await app.process_update(update)
 
 
+# ─── הבוט המנהל ──────────────────────────────────────────────────────────
+#
+# בניגוד לבוטים-הבנים, הוא **אינו** שייך לאף tenant ולכן אינו במילון
+# ‏_apps: אפליקציה קבועה אחת שעולה בעליית התהליך.
+
+_manager_app = None
+_manager_lock: asyncio.Lock | None = None
+
+
+async def ensure_manager_application():
+    """אפליקציית הבוט המנהל — נבנית פעם אחת. ‏None כשאין טוקן."""
+    global _manager_app, _manager_lock
+    if _manager_app is not None:
+        return _manager_app
+
+    if _manager_lock is None:
+        _manager_lock = asyncio.Lock()
+    async with _manager_lock:
+        if _manager_app is not None:
+            return _manager_app
+
+        import config as _cfg
+
+        token = getattr(_cfg, "MANAGER_BOT_TOKEN", "") or ""
+        if not token:
+            logger.warning("MANAGER_BOT_TOKEN לא מוגדר — הבוט המנהל לא עולה")
+            return None
+
+        from telegram.error import InvalidToken
+
+        from bot.manager_bot import create_manager_application
+
+        app = create_manager_application(token)
+        try:
+            await app.initialize()
+        except InvalidToken:
+            logger.error("הטוקן של הבוט המנהל נדחה ע\"י טלגרם")
+            return None
+        except Exception:
+            logger.error("אתחול הבוט המנהל נכשל", exc_info=True)
+            return None
+        _manager_app = app
+        logger.info("הבוט המנהל אותחל")
+        return app
+
+
+async def dispatch_manager_update(update_data: dict) -> None:
+    """עיבוד עדכון של הבוט המנהל.
+
+    הוא אינו רץ תחת tenant context: הצימוד עצמו הוא מה שקובע tenant,
+    וההתאמה נעשית לפי המשתמש היוצר בתוך ה-handler.
+    """
+    app = await ensure_manager_application()
+    if app is None:
+        return
+    from telegram import Update
+
+    update = Update.de_json(update_data, app.bot)
+    await app.process_update(update)
+
+
 async def shutdown_all_applications() -> None:
     """כיבוי נקי של כל האפליקציות (נקרא מ-atexit).
 
     כשל בכיבוי אחת לא עוצר את השאר.
     """
+    global _manager_app
     for tenant_id, app in list(_apps.items()):
         try:
             await app.shutdown()
@@ -147,12 +209,21 @@ async def shutdown_all_applications() -> None:
             logger.error("כיבוי הבוט של %s נכשל", tenant_id, exc_info=True)
     _apps.clear()
     _init_locks.clear()
+    if _manager_app is not None:
+        try:
+            await _manager_app.shutdown()
+        except Exception:
+            logger.error("כיבוי הבוט המנהל נכשל", exc_info=True)
+        _manager_app = None
 
 
 def reset_registry() -> None:
     """איפוס — לטסטים בלבד. לא מבצע shutdown (האפליקציות שם הן mocks)."""
+    global _manager_app, _manager_lock
     _apps.clear()
     _init_locks.clear()
+    _manager_app = None
+    _manager_lock = None
 
 
 def reset_tenant(tenant_id: str) -> None:

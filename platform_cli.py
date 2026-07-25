@@ -94,6 +94,43 @@ def cmd_delete_tenant(args) -> int:
     return 0
 
 
+def cmd_offboard(args) -> int:
+    """ניתוק לקוח — ניטרול הבוט, מחיקת הסודות והשעיה (idempotent)."""
+    import asyncio
+
+    from services.offboarding import offboard_tenant
+
+    if input(f"לנתק את '{args.tenant}'? הבוט שלו ינוטרל. הקלד את המזהה לאישור: ") != args.tenant:
+        print("בוטל.")
+        return 1
+    summary = asyncio.run(offboard_tenant(args.tenant))
+    for key in ("webhook_removed", "token_revoked", "secret_deleted",
+                "bot_marked_revoked", "tenant_suspended"):
+        print(f"{'✓' if summary[key] else '✗'} {key}")
+    if summary["errors"]:
+        print("שגיאות:", ", ".join(summary["errors"]))
+        print("הרצה חוזרת תשלים את מה שנותר.")
+        return 1
+    print("הבוט עצמו נשאר קיים בטלגרם (אין מתודת מחיקה ב-API) — "
+          "הלקוח יכול למחוק אותו ב-BotFather.")
+    return 0
+
+
+def cmd_pair(args) -> int:
+    """יצירת קוד צימוד ולינק ההצטרפות ללקוח."""
+    import config as _cfg
+    from bot.manager_bot import build_pairing_link
+
+    manager = (_cfg.MANAGER_BOT_USERNAME or "").lstrip("@")
+    if not manager:
+        print("MANAGER_BOT_USERNAME לא מוגדר.", file=sys.stderr)
+        return 1
+    code = cp.create_pairing_code(args.tenant)
+    print(build_pairing_link(manager, code))
+    print("הקישור חד-פעמי ופג תוך שעה.")
+    return 0
+
+
 def cmd_gen_key(args) -> int:
     from utils.crypto import generate_new_key
 
@@ -146,6 +183,14 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("delete-tenant", help="מחיקה מלאה של לקוח")
     p.add_argument("--tenant", required=True)
     p.set_defaults(func=cmd_delete_tenant)
+
+    p = sub.add_parser("offboard", help="ניתוק לקוח וניטרול הבוט שלו")
+    p.add_argument("--tenant", required=True)
+    p.set_defaults(func=cmd_offboard)
+
+    p = sub.add_parser("pair", help="קוד צימוד ולינק הצטרפות ללקוח")
+    p.add_argument("--tenant", required=True)
+    p.set_defaults(func=cmd_pair)
 
     sub.add_parser("gen-key", help="מפתח Fernet ל-SECRETS_ENCRYPTION_KEY").set_defaults(
         func=cmd_gen_key

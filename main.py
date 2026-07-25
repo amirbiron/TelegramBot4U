@@ -172,12 +172,59 @@ def main() -> None:
         # ניקוי השתקות שנשארו מהריצה הקודמת — אחרת לקוחות נשארים בלי
         # מענה אחרי קריסה, והם אפילו לא יודעים שיש בוט שאמור לענות.
         cleanup_takeovers()
-        start_bot_loop(flask_app)
+        loop = start_bot_loop(flask_app)
         from bot.webhook import register_webhook_routes
 
         register_webhook_routes(flask_app)
+        start_manager_bot(loop)
 
     run_admin(flask_app)
+
+
+def start_manager_bot(loop) -> None:
+    """העלאת הבוט המנהל ורישום ה-webhook שלו.
+
+    בניגוד לבוטים-הבנים, הוא עולה מיד: הוא לא שייך לאף לקוח, והוא זה
+    שמקבל את עדכוני `managed_bot` — כלומר בלעדיו אי אפשר לקלוט לקוח חדש.
+    כשל כאן לא מפיל את התהליך: הערוץ של הלקוחות הקיימים ממשיך לעבוד.
+    """
+    import config as _cfg
+
+    if not _cfg.MANAGER_BOT_TOKEN:
+        logger.info("MANAGER_BOT_TOKEN לא מוגדר — הבוט המנהל לא עולה")
+        return
+    if not _cfg.WEBHOOK_BASE_URL or not _cfg.MANAGER_WEBHOOK_SECRET:
+        logger.warning(
+            "WEBHOOK_BASE_URL או MANAGER_WEBHOOK_SECRET חסרים — "
+            "הבוט המנהל לא ירשם ל-webhook"
+        )
+        return
+
+    async def _setup():
+        from bot.registry import ensure_manager_application
+
+        app = await ensure_manager_application()
+        if app is None:
+            return
+        await app.bot.set_webhook(
+            url=f"{_cfg.WEBHOOK_BASE_URL}/telegram/webhook/manager",
+            secret_token=_cfg.MANAGER_WEBHOOK_SECRET,
+            allowed_updates=_cfg.MANAGER_ALLOWED_UPDATES,
+            drop_pending_updates=True,
+        )
+        logger.info("הבוט המנהל רשום ל-webhook")
+
+    future = asyncio.run_coroutine_threadsafe(_setup(), loop)
+
+    def _log(f) -> None:
+        if f.cancelled():
+            logger.warning("העלאת הבוט המנהל בוטלה")
+            return
+        exc = f.exception()
+        if exc is not None:
+            logger.error("העלאת הבוט המנהל נכשלה: %s", exc, exc_info=exc)
+
+    future.add_done_callback(_log)
 
 
 if __name__ == "__main__":

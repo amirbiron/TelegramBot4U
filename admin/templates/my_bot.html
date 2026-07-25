@@ -26,7 +26,7 @@
             <i class="bi bi-robot"></i>
             <p>עוד לא נוצר בוט ל-{{ tenant }}.</p>
             <span class="text-small text-muted">
-                אשף יצירת הבוט מגיע בשלב 2 של המימוש (Managed Bots).
+יצירת בוט נעשית מאשף ההקמה בניהול הפלטפורמה.
             </span>
         </div>
         {% endif %}
@@ -65,6 +65,14 @@
         {% endif %}
         {% else %}
         <p class="text-muted">הבוט עדיין לא חובר לחשבון הטלגרם.</p>
+        {% if bot %}
+        <form method="POST" action="/my-bot/resend-instructions" style="margin: 0.5rem 0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-secondary btn-sm" style="width: auto;">
+                <i class="bi bi-send"></i> שלח שוב הוראות חיבור
+            </button>
+        </form>
+        {% endif %}
         <p class="text-small text-muted">
             החיבור נעשה מאפליקציית טלגרם של בעל העסק: הגדרות ← Chatbots ←
             בחירת הבוט. שם גם נקבע אילו צ'אטים חשופים לו ואילו הרשאות הוא מקבל.

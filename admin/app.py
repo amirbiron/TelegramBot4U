@@ -656,6 +656,172 @@ def create_admin_app() -> Flask:
             "platform.html", tenants=tenants, bots=bots, connections=connections,
         )
 
+    @app.route("/platform/new", methods=["GET", "POST"])
+    @login_required
+    @platform_admin_required
+    def platform_new_tenant():
+        """אשף לקוח חדש — יצירת tenant, מפתח webhook וקוד צימוד."""
+        import control_plane as cp
+
+        if request.method == "POST":
+            tenant_id = request.form.get("tenant_id", "").strip().lower()
+            display_name = request.form.get("display_name", "").strip()
+            if not tenant_id or not display_name:
+                flash("צריך גם מזהה וגם שם עסק.", "danger")
+                return render_template("platform_new_tenant.html")
+            try:
+                cp.create_tenant(tenant_id, display_name)
+            except Exception as exc:
+                logger.error("יצירת tenant נכשלה", exc_info=True)
+                flash(f"היצירה נכשלה: {exc}", "danger")
+                return render_template("platform_new_tenant.html")
+
+            # מפתח ה-webhook נוצר יחד עם הלקוח — הוא הזהות של ה-route שלו
+            cp.set_route("telegram_webhook_key", cp.generate_route_key(), tenant_id)
+            _audit_log("tenant_create", f"tenant={tenant_id}")
+            return redirect(url_for("platform_onboarding", tenant_id=tenant_id))
+
+        return render_template("platform_new_tenant.html")
+
+    @app.route("/platform/onboarding/<tenant_id>")
+    @login_required
+    @platform_admin_required
+    def platform_onboarding(tenant_id: str):
+        """מסך ההקמה: קוד צימוד + סטטוסים חיים של שלבי החיבור."""
+        import control_plane as cp
+
+        tenant = cp.get_tenant(tenant_id)
+        if tenant is None:
+            flash("הלקוח לא נמצא.", "danger")
+            return redirect(url_for("platform_home"))
+        return render_template(
+            "platform_onboarding.html", tenant=tenant,
+            pairing_link=session.pop(f"pairing_link_{tenant_id}", ""),
+        )
+
+    @app.route("/platform/onboarding/<tenant_id>/code", methods=["POST"])
+    @login_required
+    @platform_admin_required
+    def platform_pairing_code(tenant_id: str):
+        """יצירת קוד צימוד חדש (תפוגה שעה) והצגת הלינק ללקוח."""
+        import control_plane as cp
+        from bot.manager_bot import build_pairing_link
+
+        manager = (_cfg.MANAGER_BOT_USERNAME or "").lstrip("@")
+        if not manager:
+            flash("MANAGER_BOT_USERNAME לא מוגדר — אי אפשר לבנות לינק צימוד.", "danger")
+            return redirect(url_for("platform_onboarding", tenant_id=tenant_id))
+        try:
+            code = cp.create_pairing_code(tenant_id)
+        except Exception as exc:
+            logger.error("יצירת קוד צימוד נכשלה", exc_info=True)
+            flash(f"יצירת הקוד נכשלה: {exc}", "danger")
+            return redirect(url_for("platform_onboarding", tenant_id=tenant_id))
+
+        _audit_log("pairing_code_create", f"tenant={tenant_id}")
+        # הלינק נשמר ב-session ולא ב-URL: הוא credential חד-פעמי, ולא
+        # אמור להישאר בהיסטוריית הדפדפן או ב-Referer.
+        session[f"pairing_link_{tenant_id}"] = build_pairing_link(manager, code)
+        return redirect(url_for("platform_onboarding", tenant_id=tenant_id))
+
+    @app.route("/platform/onboarding/<tenant_id>/status")
+    @login_required
+    @platform_admin_required
+    def platform_onboarding_status(tenant_id: str):
+        """סטטוסי ההקמה — נטען ב-HTMX polling מהמסך."""
+        import control_plane as cp
+
+        bot_row = cp.get_managed_bot_for_tenant(tenant_id)
+        connection = cp.get_business_connection_for_tenant(tenant_id)
+        paired = any(
+            r["used_by_user_id"] for r in _pairing_rows(tenant_id)
+        )
+        return render_template(
+            "partials/onboarding_status.html",
+            paired=paired, bot=bot_row, connection=connection,
+        )
+
+    def _pairing_rows(tenant_id: str) -> list[dict]:
+        import control_plane as cp
+
+        with cp.get_platform_connection() as conn:
+            rows = conn.execute(
+                "SELECT used_by_user_id FROM pairing_codes WHERE tenant_id = ?",
+                (tenant_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    @app.route("/platform/<tenant_id>/offboard", methods=["POST"])
+    @login_required
+    @platform_admin_required
+    def platform_offboard(tenant_id: str):
+        """ניתוק לקוח — ניטרול הבוט, מחיקת הסודות והשעיה."""
+        import asyncio
+
+        from services.offboarding import offboard_tenant
+
+        loop = app.config.get("_bot_loop")
+        if loop is None:
+            flash("לולאת הבוטים אינה זמינה — נסו מה-CLI.", "danger")
+            return redirect(url_for("platform_home"))
+        try:
+            future = asyncio.run_coroutine_threadsafe(offboard_tenant(tenant_id), loop)
+            summary = future.result(timeout=30)
+        except Exception:
+            logger.error("ניתוק הלקוח נכשל", exc_info=True)
+            flash("הניתוק נכשל. בדקו את הלוג.", "danger")
+            return redirect(url_for("platform_home"))
+
+        _audit_log("tenant_offboard", f"tenant={tenant_id}")
+        if summary["errors"]:
+            flash(
+                f"הניתוק בוצע חלקית: {', '.join(summary['errors'])}. "
+                "הרצה חוזרת תשלים את השאר.",
+                "warning",
+            )
+        else:
+            flash("הלקוח נותק והבוט נוטרל.", "success")
+        return redirect(url_for("platform_home"))
+
+    @app.route("/my-bot/resend-instructions", methods=["POST"])
+    @login_required
+    def resend_connection_instructions():
+        """שליחה חוזרת של הוראות החיבור לבעל העסק."""
+        import asyncio
+
+        from tenancy import get_current_tenant
+
+        tenant = get_current_tenant()
+        loop = app.config.get("_bot_loop")
+        if loop is None or tenant == DEFAULT_TENANT:
+            flash("אי אפשר לשלוח כרגע.", "danger")
+            return redirect(url_for("my_bot"))
+
+        async def _send():
+            import control_plane as cp
+            from bot.manager_bot import _onboarding_instructions
+            from bot.registry import ensure_manager_application
+
+            bot_row = cp.get_managed_bot_for_tenant(tenant)
+            if not bot_row:
+                return False
+            manager = await ensure_manager_application()
+            if manager is None:
+                return False
+            await manager.bot.send_message(
+                chat_id=bot_row["owner_user_id"],
+                text=_onboarding_instructions(bot_row["bot_username"]),
+            )
+            return True
+
+        try:
+            sent = asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=20)
+        except Exception:
+            logger.error("שליחת הוראות החיבור נכשלה", exc_info=True)
+            sent = False
+        flash("ההוראות נשלחו." if sent else "השליחה נכשלה.", "success" if sent else "danger")
+        return redirect(url_for("my_bot"))
+
     return app
 
 

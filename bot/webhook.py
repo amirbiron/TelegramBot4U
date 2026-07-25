@@ -87,15 +87,51 @@ def register_webhook_routes(flask_app) -> None:
         future.add_done_callback(_log_dispatch_result)
         return ("", 200)
 
-    # ה-route פטור מ-CSRF (שרת-לשרת). ה-extension נשמר ב-app.extensions
+    @flask_app.route("/telegram/webhook/manager", methods=["POST"])
+    def telegram_manager_webhook():
+        """הבוט המנהל — צימוד ויצירת בוטים-בנים.
+
+        אין כאן route key: הבוט המנהל יחיד, וההפרדה היא בנתיב עצמו.
+        האימות זהה — הסוד בכותרת, ‏fail closed בלעדיו.
+        """
+        import config as _cfg
+
+        expected = getattr(_cfg, "MANAGER_WEBHOOK_SECRET", "") or ""
+        if not expected:
+            logger.error("MANAGER_WEBHOOK_SECRET לא מוגדר — הבקשה נדחית")
+            return ("", 403)
+        received = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not hmac.compare_digest(str(received), str(expected)):
+            logger.warning("webhook מנהל: סוד שגוי")
+            return ("", 403)
+
+        update_data = request.get_json(force=True, silent=True)
+        if not isinstance(update_data, dict):
+            return ("", 400)
+
+        loop = flask_app.config.get("_bot_loop")
+        if loop is None:
+            logger.error("webhook מנהל: לולאת הבוטים לא עלתה — העדכון נזרק")
+            return ("", 503)
+
+        from bot.registry import dispatch_manager_update
+
+        future = asyncio.run_coroutine_threadsafe(
+            dispatch_manager_update(update_data), loop,
+        )
+        future.add_done_callback(_log_dispatch_result)
+        return ("", 200)
+
+    # ה-routes פטורים מ-CSRF (שרת-לשרת). ה-extension נשמר ב-app.extensions
     # ע"י create_admin_app.
     csrf = flask_app.extensions.get("csrf")
     if csrf is not None:
         csrf.exempt(telegram_business_webhook)
+        csrf.exempt(telegram_manager_webhook)
     else:
         logger.error(
-            "webhook: CSRFProtect לא נמצא על האפליקציה — ה-route לא פוטר "
-            "מ-CSRF ועלול להידחות"
+            "webhook: CSRFProtect לא נמצא על האפליקציה — ה-routes לא פוטרו "
+            "מ-CSRF ועלולים להידחות"
         )
 
 
