@@ -31,9 +31,13 @@ def _ensure_column(conn, table: str, column: str, ddl_suffix: str) -> None:
 
 
 def run_migrations(conn) -> None:
-    """הפעלת כל המיגרציות — נקראת מתוך `init_db()` עם חיבור פתוח.
-
-    כרגע ריקה: כל הסכימה מוגדרת ב-`init_db`, ואין עדיין deployment עם
-    סכימה ישנה יותר. המיגרציה הראשונה תתווסף כאן.
-    """
-    return None
+    """הפעלת כל המיגרציות — נקראת מתוך `init_db()` עם חיבור פתוח."""
+    # ── T4.3 — שורת הגילוי ──
+    # שלוש עמודות לשלוש טבלאות **קיימות**, ולכן כאן ולא ב-executescript:
+    # ב-DB של tenant שכבר נוצר, ה-CREATE TABLE IF NOT EXISTS אינו רץ,
+    # וכל כתיבה שמפנה לעמודות האלה הייתה נופלת על "no such column".
+    _ensure_column(conn, "users", "disclosure_sent_at", "TEXT")
+    _ensure_column(
+        conn, "bot_settings", "disclosure_enabled", "INTEGER NOT NULL DEFAULT 1",
+    )
+    _ensure_column(conn, "bot_settings", "disclosure_template", "TEXT DEFAULT ''")

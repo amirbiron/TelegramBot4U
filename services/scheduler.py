@@ -48,6 +48,19 @@ async def _run_digest_if_due() -> None:
         digest_service.mark_digest_ran()
 
 
+async def _run_backup_if_due() -> None:
+    """גיבוי לילי, אם הגיעה השעה והיום טרם רץ."""
+    from services import backup_job
+
+    if not backup_job.is_backup_due():
+        return
+    logger.info("scheduler: מריץ גיבוי לילי")
+    try:
+        await asyncio.to_thread(backup_job.run_backup_now)
+    finally:
+        backup_job.mark_backup_ran()
+
+
 async def _run_retention_if_due() -> None:
     """‏retention יומי על ה-DB של כל tenant."""
     from services import retention_service
@@ -63,7 +76,11 @@ async def _run_retention_if_due() -> None:
 
 async def _tick() -> None:
     """התעוררות אחת. כל עבודה עטופה בנפרד — כשל באחת לא עוצר את השנייה."""
+    # הסדר משמעותי: גיבוי (03:00) לפני retention (04:00). ‏purge שרץ
+    # לפני הגיבוי היה מוציא מהגיבוי בדיוק את מה שנמחק, ומחיקה בטעות
+    # הייתה הופכת לבלתי הפיכה.
     for name, job in (
+        ("backup", _run_backup_if_due),
         ("digest", _run_digest_if_due),
         ("retention", _run_retention_if_due),
     ):

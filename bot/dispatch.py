@@ -24,7 +24,7 @@ import re
 from telegram.error import Forbidden, RetryAfter, TelegramError
 
 import database as db
-from services import owner_channel
+from services import disclosure, owner_channel
 
 logger = logging.getLogger(__name__)
 
@@ -242,16 +242,28 @@ async def dispatch_result(bot, result, msg, conn: dict, display_name: str) -> No
     connection_id = msg.business_connection_id
 
     if result.text:
+        # שורת הגילוי (‏T4.3) משורשרת לתשובה הראשונה בצ'אט, לא נשלחת
+        # כהודעה נפרדת — הודעה נפרדת נקראת כמו הודעת מערכת, וזה בדיוק
+        # מה שהערוץ הזה נמנע ממנו.
+        outgoing = disclosure.prepend(result.text, user_id)
+        disclosure_added = outgoing != result.text
+
         sent = await send_to_customer(
-            bot, chat_id, connection_id, result.text, user_id, display_name, conn,
+            bot, chat_id, connection_id, outgoing, user_id, display_name, conn,
         )
+        # הסימון **אחרי** שליחה מוצלחת ורק אם הכול נמסר: בשליחה חלקית
+        # ייתכן שהצ'אנק עם שורת הגילוי לא הגיע, וסימון היה אומר שהלקוח
+        # לא יראה אותה לעולם.
+        if disclosure_added and sent == outgoing:
+            disclosure.mark_sent(user_id)
+
         if sent:
             # נשמר מה שנמסר, לא מה שניסינו לשלוח: בשליחה חלקית ההפרש
             # הוא בדיוק מה שהלקוח לא ראה, ואסור שההיסטוריה תטען אחרת.
-            if sent != result.text:
+            if sent != outgoing:
                 logger.warning(
                     "שליחה חלקית ללקוח — נשמרו %d מתוך %d תווים",
-                    len(sent), len(result.text),
+                    len(sent), len(outgoing),
                 )
             try:
                 db.save_message(

@@ -652,13 +652,57 @@ def create_admin_app() -> Flask:
                 rights = json.loads(connection["rights_json"])
             except (ValueError, TypeError):
                 logger.error("rights_json לא תקין")
+        from services import disclosure
+
         return render_template(
             "my_bot.html",
             tenant=tenant,
             bot=bot_row,
             connection=connection,
             rights=rights,
+            disclosure_enabled=disclosure.is_enabled(),
+            disclosure_preview=disclosure.render_disclosure(),
+            disclosure_template=(db.get_bot_settings() or {}).get(
+                "disclosure_template", ""
+            ),
         )
+
+    @app.route("/my-bot/disclosure", methods=["POST"])
+    @login_required
+    def update_disclosure():
+        """מתג שורת הגילוי + התבנית שלה.
+
+        ההחלטה נרשמת ב-`consent_ledger` בכל שינוי — גם הדלקה. בלי
+        רישום ההדלקה, רצף ההחלטות לא שלם ואי אפשר לענות "ממתי זה היה
+        כבוי".
+        """
+        from services import disclosure
+
+        enabled = request.form.get("disclosure_enabled") == "on"
+        template = (request.form.get("disclosure_template") or "").strip()
+        was_enabled = disclosure.is_enabled()
+
+        try:
+            db.update_bot_settings(
+                disclosure_enabled=1 if enabled else 0,
+                disclosure_template=template,
+            )
+        except Exception:
+            logger.error("עדכון שורת הגילוי נכשל", exc_info=True)
+            flash("העדכון נכשל. נסה שוב.", "danger")
+            return redirect(url_for("my_bot"))
+
+        if enabled != was_enabled:
+            disclosure.record_toggle(enabled, actor=session.get("username", "owner"))
+            _audit_log(
+                "disclosure_toggle", f"enabled={enabled}",
+            )
+        flash(
+            "שורת הגילוי עודכנה." if enabled
+            else "שורת הגילוי כבויה. ההחלטה נרשמה ביומן.",
+            "success" if enabled else "warning",
+        )
+        return redirect(url_for("my_bot"))
 
     # ── ניהול פלטפורמה ──
 
