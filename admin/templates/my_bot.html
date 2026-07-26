@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header animate-fade-in">
+    <h1><i class="bi bi-robot"></i> הבוט שלי</h1>
+</div>
+
+<div class="card animate-fade-in">
+    <div class="card-body">
+        {% if bot %}
+        <h3>@{{ bot.bot_username }}</h3>
+        <p>
+            סטטוס:
+            {% if bot.status == 'connected' %}
+            <span class="badge badge-success">מחובר</span>
+            {% elif bot.status == 'secretary_on' %}
+            <span class="badge badge-warning">מוכן לחיבור</span>
+            {% elif bot.status == 'revoked' %}
+            <span class="badge badge-danger">מנוטרל</span>
+            {% else %}
+            <span class="badge badge-secondary">נוצר</span>
+            {% endif %}
+        </p>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-robot"></i>
+            <p>עוד לא נוצר בוט ל-{{ tenant }}.</p>
+            <span class="text-small text-muted">
+יצירת בוט נעשית מאשף ההקמה בניהול הפלטפורמה.
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card animate-slide-up" style="margin-top: var(--space-md);">
+    <div class="card-body">
+        <h3><i class="bi bi-link-45deg"></i> חיבור לחשבון</h3>
+        {% if connection %}
+        <p>
+            {% if connection.is_enabled %}
+            <span class="badge badge-success">החיבור פעיל</span>
+            {% else %}
+            <span class="badge badge-danger">החיבור נותק</span>
+            {% endif %}
+            {% if connection.can_reply %}
+            <span class="badge badge-success">מותר לענות</span>
+            {% else %}
+            <span class="badge badge-warning" title="בלי ההרשאה הזאת הבוט לא יכול לענות ללקוחות">אין הרשאת מענה</span>
+            {% endif %}
+        </p>
+        <p class="text-small text-muted">
+            מחובר מאז {{ connection.connected_at|il_datetime }} ·
+            עודכן {{ connection.updated_at|relative_time }}
+        </p>
+        {% if rights %}
+        <details>
+            <summary class="text-small text-muted">ההרשאות שניתנו</summary>
+            <ul class="text-small">
+                {% for key, value in rights.items() %}
+                <li>{{ key }}: {{ 'כן' if value else 'לא' }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+        {% else %}
+        <p class="text-muted">הבוט עדיין לא חובר לחשבון הטלגרם.</p>
+        {% if bot %}
+        <form method="POST" action="/my-bot/resend-instructions" style="margin: 0.5rem 0;">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-secondary btn-sm" style="width: auto;">
+                <i class="bi bi-send"></i> שלח שוב הוראות חיבור
+            </button>
+        </form>
+        {% endif %}
+        <p class="text-small text-muted">
+            החיבור נעשה מאפליקציית טלגרם של בעל העסק: הגדרות ← Chatbots ←
+            בחירת הבוט. שם גם נקבע אילו צ'אטים חשופים לו ואילו הרשאות הוא מקבל.
+        </p>
+        {% endif %}
+    </div>
+</div>
+
+{% endblock %}

@@ -1,0 +1,16 @@
+{
+  "update_id": 100002,
+  "business_connection": {
+    "id": "conn-demo-0001",
+    "user": {
+      "id": 900001,
+      "is_bot": false,
+      "first_name": "רון",
+      "last_name": "כהן",
+      "username": "ron_business"
+    },
+    "user_chat_id": 900001,
+    "date": 1785000000,
+    "is_enabled": false
+  }
+}

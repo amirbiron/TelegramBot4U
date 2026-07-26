@@ -1,0 +1,37 @@
+{
+  "update_id": 100013,
+  "business_message": {
+    "message_id": 5504,
+    "business_connection_id": "conn-demo-0001",
+    "from": {
+      "id": 500042,
+      "is_bot": false,
+      "first_name": "דנה",
+      "last_name": "לוי",
+      "username": "dana_l"
+    },
+    "chat": {
+      "id": 500042,
+      "type": "private",
+      "first_name": "דנה",
+      "username": "dana_l"
+    },
+    "date": 1785000300,
+    "photo": [
+      {
+        "file_id": "AgACfake-small",
+        "file_unique_id": "uniq-small",
+        "width": 90,
+        "height": 67,
+        "file_size": 1234
+      },
+      {
+        "file_id": "AgACfake-large",
+        "file_unique_id": "uniq-large",
+        "width": 1280,
+        "height": 960,
+        "file_size": 98765
+      }
+    ]
+  }
+}

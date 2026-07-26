@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header animate-fade-in">
+    <h1><i class="bi bi-chat-dots"></i> שיחות</h1>
+</div>
+
+<div class="card animate-fade-in" style="margin-bottom: var(--space-md);">
+    <div class="card-body" style="padding: 0;">
+        {% if users %}
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>לקוח</th>
+                        <th>הודעות</th>
+                        <th>פעילות אחרונה</th>
+                        <th>חלון מענה</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for u in users %}
+                    {% set window = u.last_inbound_at|reply_window %}
+                    <tr>
+                        <td data-label="לקוח" class="fw-semibold" style="color: var(--text-primary);">
+                            {{ u.username or u.user_id }}
+                        </td>
+                        <td data-label="הודעות">{{ u.message_count }}</td>
+                        <td data-label="פעילות אחרונה" class="text-small text-muted"
+                            title="{{ u.last_active_at|il_datetime }}">
+                            {{ u.last_active_at|relative_time }}
+                        </td>
+                        <td data-label="חלון מענה">
+                            {% if window == 'open' %}
+                            <span class="badge badge-success">פתוח</span>
+                            {% elif window == 'closing' %}
+                            <span class="badge badge-warning">נסגר בקרוב</span>
+                            {% elif window == 'closed' %}
+                            <span class="badge badge-danger" title="חלון 24 השעות נסגר — אי אפשר לשלוח בשם החשבון עד שהלקוח יכתוב שוב">סגור</span>
+                            {% else %}
+                            <span class="badge badge-secondary">לא ידוע</span>
+                            {% endif %}
+                            {% if u.send_failure_reason %}
+                            <span class="badge badge-danger" title="כשל שליחה אחרון">{{ u.send_failure_reason }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="/conversations?user_id={{ u.user_id|urlencode }}"
+                               class="btn btn-secondary btn-sm">
+                                <i class="bi bi-eye"></i> צפייה
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-chat-dots"></i>
+            <p>עוד לא הגיעו הודעות.</p>
+            <span class="text-small text-muted">
+                שיחה מופיעה כאן מהרגע שהגיעה בה הודעה ראשונה אחרי החיבור —
+                אין ייבוא היסטוריה מטלגרם.
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if selected_user %}
+<div class="card animate-slide-up">
+    <div class="card-body">
+        <h3><i class="bi bi-person"></i> {{ selected_user }}</h3>
+        {% if messages %}
+        <div class="chat-log">
+            {% for m in messages %}
+            <div class="chat-message {% if m.role == 'user' %}from-customer{% else %}from-business{% endif %}">
+                <div class="text-small text-muted">
+                    {% if m.role == 'user' %}לקוח{% elif m.authored_by == 'owner' %}נענה על ידך{% else %}נענה על ידי הבוט{% endif %}
+                    · {{ m.created_at|il_datetime }}
+                </div>
+                <div>{{ m.message }}</div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="text-muted">אין הודעות שמורות לשיחה הזאת.</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

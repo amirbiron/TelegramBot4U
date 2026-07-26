@@ -1,0 +1,38 @@
+{# סטטוסי ההקמה — נטען ב-HTMX polling מ-/platform/onboarding/<id>/status #}
+<ul class="onboarding-steps">
+    <li>
+        {% if paired %}
+        <span class="badge badge-success">✓</span> הלקוח צומד
+        {% else %}
+        <span class="badge badge-secondary">◌</span> ממתין שהלקוח יפתח את קישור ההצטרפות
+        {% endif %}
+    </li>
+    <li>
+        {% if bot %}
+        <span class="badge badge-success">✓</span> הבוט נוצר — @{{ bot.bot_username }}
+        {% else %}
+        <span class="badge badge-secondary">◌</span> ממתין ליצירת הבוט
+        {% endif %}
+    </li>
+    <li>
+        {% if bot and bot.status in ['secretary_on', 'connected'] %}
+        <span class="badge badge-success">✓</span> Secretary Mode פעיל
+        {% else %}
+        <span class="badge badge-warning">◌</span>
+        ממתין שהלקוח ידליק Secretary Mode ב-BotFather
+        <span class="text-small text-muted">(שלב ידני — אין API)</span>
+        {% endif %}
+    </li>
+    <li>
+        {% if connection and connection.is_enabled and connection.can_reply %}
+        <span class="badge badge-success">✓</span> מחובר לחשבון ומורשה לענות
+        {% elif connection and connection.is_enabled %}
+        <span class="badge badge-warning">!</span>
+        מחובר, אבל בלי הרשאת מענה — הלקוח צריך לאשר "לענות להודעות"
+        {% elif connection %}
+        <span class="badge badge-danger">✗</span> החיבור נותק
+        {% else %}
+        <span class="badge badge-secondary">◌</span> ממתין לחיבור בהגדרות ← Chatbots
+        {% endif %}
+    </li>
+</ul>

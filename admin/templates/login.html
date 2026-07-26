@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ business_name }} — התחברות</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rubik:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="{{ url_for('static', filename='css/style.css') }}" rel="stylesheet">
+</head>
+<body class="login-page">
+    <div class="login-card">
+        <div class="login-icon">
+            <i class="bi bi-chat-heart"></i>
+        </div>
+        <h2 class="login-title">{{ business_name }}</h2>
+        <p class="login-subtitle">פאנל ניהול</p>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+        {% for category, message in messages %}
+        <div class="alert alert-{{ category }}" style="margin-bottom: 1rem;">
+            <span>{{ message }}</span>
+        </div>
+        {% endfor %}
+        {% endif %}
+        {% endwith %}
+
+        <form method="POST">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-group">
+                <label for="username" class="form-label">שם משתמש או אימייל</label>
+                <input type="text" class="form-input" id="username" name="username" required autofocus
+                       autocomplete="username" placeholder="שם משתמש או כתובת אימייל">
+            </div>
+            <div class="form-group">
+                <label for="password" class="form-label">סיסמה</label>
+                <input type="password" class="form-input" id="password" name="password" required
+                       autocomplete="current-password" placeholder="הכניסו סיסמה">
+            </div>
+            <div class="form-group" style="display: flex; align-items: center; gap: 0.5rem;">
+                <input type="checkbox" id="remember_me" name="remember_me" value="1"
+                       style="width: auto; accent-color: var(--primary);">
+                <label for="remember_me" style="margin: 0; cursor: pointer;">זכור אותי</label>
+            </div>
+            <button type="submit" class="btn btn-primary w-full" style="margin-top: 0.5rem;">
+                <i class="bi bi-box-arrow-in-left"></i> התחברות
+            </button>
+        </form>
+    </div>
+</body>
+</html>

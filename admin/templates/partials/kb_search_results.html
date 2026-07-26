@@ -1,0 +1,36 @@
+{% if entries %}
+<div class="table-wrapper">
+    <table>
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>קטגוריה</th>
+                <th>כותרת</th>
+                <th>קטע מהתוכן</th>
+                <th></th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for entry in entries %}
+            <tr>
+                <td data-label="#">{{ loop.index }}</td>
+                <td data-label="קטגוריה"><span class="badge badge-category">{{ entry.category }}</span></td>
+                <td data-label="כותרת" class="fw-semibold" style="color: var(--text-primary);">{{ entry.title }}</td>
+                <td data-label="קטע מהתוכן">{{ entry.content[:200] }}{% if entry.content|length > 200 %}...{% endif %}</td>
+                <td>
+                    <a href="/kb/edit/{{ entry.id }}" class="btn btn-secondary btn-icon btn-sm" title="ערוך">
+                        <i class="bi bi-pencil"></i>
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="empty-state">
+    <i class="bi bi-search"></i>
+    <p>לא נמצאו תוצאות עבור "{{ query }}"</p>
+    <span class="text-small text-muted">החיפוש הוא טקסטואלי — נסו מילה שמופיעה בכותרת או בתוכן.</span>
+</div>
+{% endif %}

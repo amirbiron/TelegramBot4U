@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header animate-fade-in">
+    <h1><i class="bi bi-speedometer2"></i> לוח בקרה</h1>
+</div>
+
+<div class="stats-grid animate-fade-in">
+    <div class="card">
+        <div class="card-body">
+            <div class="stat-value">{{ counts.kb_entries }}</div>
+            <div class="stat-label"><i class="bi bi-book"></i> רשומות בבסיס הידע</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <div class="stat-value">{{ counts.users }}</div>
+            <div class="stat-label"><i class="bi bi-people"></i> לקוחות מוכרים</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <div class="stat-value">{{ counts.open_gaps }}</div>
+            <div class="stat-label"><i class="bi bi-question-circle"></i> פערי ידע פתוחים</div>
+        </div>
+    </div>
+    <div class="card">
+        <div class="card-body">
+            <div class="stat-value">{{ counts.active_takeovers }}</div>
+            <div class="stat-label"><i class="bi bi-person-check"></i> שיחות בהשתקה</div>
+        </div>
+    </div>
+</div>
+
+<div class="card animate-slide-up" style="margin-top: var(--space-md);">
+    <div class="card-body">
+        <h3><i class="bi bi-cpu"></i> בסיס הידע שנשלח לבוט</h3>
+        <p class="text-small text-muted">
+            כל בסיס הידע נשלח לבוט בכל הודעה — אין אינדקס ואין בנייה מחדש.
+            עריכה כאן נכנסת לתוקף כבר בהודעה הבאה.
+        </p>
+        <p>
+            {{ kb.entry_count }} רשומות פעילות ·
+            כ-{{ kb.token_estimate }} טוקנים
+        </p>
+        {% if kb.is_over_threshold %}
+        <div class="alert alert-warning">
+            <span>
+                <i class="bi bi-exclamation-triangle"></i>
+                בסיס הידע גדול. שקלו לפצל רשומות ארוכות או להסיר תוכן שאינו בשימוש —
+                כל הודעה נושאת את כולו.
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

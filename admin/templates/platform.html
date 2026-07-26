@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header animate-fade-in">
+    <h1><i class="bi bi-diagram-3"></i> ניהול פלטפורמה</h1>
+    <a href="/platform/new" class="btn btn-primary btn-sm">
+        <i class="bi bi-person-plus"></i> לקוח חדש
+    </a>
+</div>
+
+<div class="card animate-slide-up">
+    <div class="card-body" style="padding: 0;">
+        {% if tenants %}
+        <div class="table-wrapper">
+            <table>
+                <thead>
+                    <tr>
+                        <th>מזהה</th>
+                        <th>שם העסק</th>
+                        <th>סטטוס</th>
+                        <th>בוט</th>
+                        <th>חיבור</th>
+                        <th>נוצר</th>
+                        <th>פעולות</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for t in tenants %}
+                    {% set bot = bots.get(t.tenant_id) %}
+                    {% set conn = connections.get(t.tenant_id) %}
+                    <tr>
+                        <td data-label="מזהה"><code>{{ t.tenant_id }}</code></td>
+                        <td data-label="שם העסק" class="fw-semibold" style="color: var(--text-primary);">{{ t.display_name }}</td>
+                        <td data-label="סטטוס">
+                            {% if t.status == 'active' %}
+                            <span class="badge badge-success">פעיל</span>
+                            {% elif t.status == 'suspended' %}
+                            <span class="badge badge-danger">מושעה</span>
+                            {% else %}
+                            <span class="badge badge-warning">בהגירה</span>
+                            {% endif %}
+                        </td>
+                        <td data-label="בוט">
+                            {% if bot %}
+                            @{{ bot.bot_username }}
+                            <span class="badge badge-secondary">{{ bot.status }}</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td data-label="חיבור">
+                            {% if conn and conn.is_enabled and conn.can_reply %}
+                            <span class="badge badge-success">מחובר</span>
+                            {% elif conn and conn.is_enabled %}
+                            <span class="badge badge-warning">בלי הרשאת מענה</span>
+                            {% elif conn %}
+                            <span class="badge badge-danger">נותק</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td data-label="נוצר" class="text-small text-muted">{{ t.created_at|il_datetime }}</td>
+                        <td data-label="פעולות">
+                            <div class="actions-cell">
+                                <a href="/platform/onboarding/{{ t.tenant_id }}"
+                                   class="btn btn-secondary btn-sm">
+                                    <i class="bi bi-rocket-takeoff"></i> הקמה
+                                </a>
+                                {% if t.status == 'active' %}
+                                <form method="POST" action="/platform/{{ t.tenant_id }}/offboard"
+                                      style="display:inline;"
+                                      onsubmit="return confirm('לנתק את ' + {{ t.display_name | tojson }} + '? הבוט שלו ינוטרל והחשבון יושעה.');">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                                    <button type="submit" class="btn btn-outline-danger btn-sm">
+                                        <i class="bi bi-plug"></i> ניתוק
+                                    </button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="empty-state">
+            <i class="bi bi-diagram-3"></i>
+            <p>אין עדיין לקוחות רשומים.</p>
+            <span class="text-small text-muted">
+לחצו על "לקוח חדש" כדי להתחיל, או
+                <code>python -m platform_cli create-tenant</code>.
+            </span>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

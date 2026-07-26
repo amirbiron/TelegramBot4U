@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div style="margin-bottom: 1rem;">
+    <a href="/platform" class="btn btn-secondary btn-sm">
+        <i class="bi bi-arrow-right"></i> חזרה לניהול פלטפורמה
+    </a>
+</div>
+
+<div class="page-header animate-fade-in">
+    <h1><i class="bi bi-rocket-takeoff"></i> הקמה — {{ tenant.display_name }}</h1>
+</div>
+
+<div class="card animate-fade-in">
+    <div class="card-body">
+        <h3>1. קישור הצטרפות</h3>
+        <p class="text-small text-muted">
+            שלחו את הקישור ללקוח. הוא פותח את הבוט המנהל, מזהה את הלקוח,
+            ומיד שולח לו קישור ליצירת הבוט שלו. הקישור חד-פעמי ופג תוך שעה.
+        </p>
+
+        {% if pairing_link %}
+        <div class="alert alert-success">
+            <span style="word-break: break-all;">{{ pairing_link }}</span>
+        </div>
+        <p class="text-small text-muted">
+            <i class="bi bi-exclamation-triangle"></i>
+            הקישור מוצג פעם אחת בלבד. אם איבדתם אותו — צרו קוד חדש.
+        </p>
+        {% endif %}
+
+        <form method="POST" action="/platform/onboarding/{{ tenant.tenant_id }}/code">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-primary btn-sm" style="width: auto;">
+                <i class="bi bi-link-45deg"></i>
+                {% if pairing_link %}יצירת קוד חדש{% else %}יצירת קוד צימוד{% endif %}
+            </button>
+        </form>
+    </div>
+</div>
+
+<div class="card animate-slide-up" style="margin-top: var(--space-md);">
+    <div class="card-body">
+        <h3>2. התקדמות</h3>
+        <div id="onboarding-status"
+             hx-get="/platform/onboarding/{{ tenant.tenant_id }}/status"
+             hx-trigger="load, every 5s"
+             hx-swap="innerHTML">
+            <span class="text-muted">טוען...</span>
+        </div>
+    </div>
+</div>
+
+<div class="card animate-slide-up" style="margin-top: var(--space-md);">
+    <div class="card-body">
+        <h3>3. מה הלקוח צריך לעשות בעצמו</h3>
+        <p class="text-small text-muted">
+            שני הצעדים האלה חייבים להיעשות מהאפליקציה של בעל העסק. הבוט
+            המנהל שולח לו אותם אוטומטית אחרי יצירת הבוט.
+        </p>
+        <ol>
+            <li>
+                <strong>@BotFather ← /mybots ← Bot Settings ← Secretary Mode.</strong>
+                אין דרך להדליק את זה דרך ה-API — נבדק ותועד
+                (<code>docs/verification_log.md</code>, V1).
+            </li>
+            <li>
+                <strong>הגדרות טלגרם ← Chatbots</strong> — לבחור את הבוט, לאשר לו
+                לענות להודעות, ולבחור אילו צ'אטים הוא רואה.
+            </li>
+        </ol>
+    </div>
+</div>
+{% endblock %}

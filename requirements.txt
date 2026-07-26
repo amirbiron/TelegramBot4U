@@ -1,0 +1,35 @@
+# ─── ליבה ─────────────────────────────────────────────────────────────────
+
+# הבוט — עדכוני Business (Secretary Mode) קיימים מ-21.1; Managed Bots
+# (ManagedBotUpdatedHandler, getManagedBotToken) קיימים מ-22.8.
+# נעילה ל->=22.8 כי שלב 2 נשען על ה-handler הזה ישירות.
+python-telegram-bot[ext]>=22.8
+
+# LLM — ספק ברירת מחדל בסגנון OpenAI (OpenAI/Gemini) + Anthropic פר-tenant
+openai
+anthropic
+# אומדן טוקנים ל-kb_service (יש fallback ל-len//3 כשלא מותקן)
+tiktoken
+
+# פאנל הניהול
+flask
+flask-wtf
+gunicorn
+requests
+
+# הצפנת סודות במנוחה (utils/crypto.py — טוקני בוטים-בנים)
+cryptography
+
+# ניטור שגיאות בפרודקשן
+sentry-sdk[flask]
+
+# תצורה
+python-dotenv
+
+# ─── פיתוח ────────────────────────────────────────────────────────────────
+pytest
+pytest-asyncio
+ruff
+# ‏tests/test_deployment.py קורא את render.yaml. בלי זה הטסטים שמגנים
+# על תצורת הפרודקשן היו מדולגים בשקט — כלומר קיימים אבל לא רצים.
+PyYAML
