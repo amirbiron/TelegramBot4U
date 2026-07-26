@@ -77,3 +77,12 @@ def _rebuild_owner_alert_targets(conn) -> None:
 def run_migrations(conn) -> None:
     """הפעלת כל המיגרציות — נקראת מתוך `init_db()` עם חיבור פתוח."""
     _rebuild_owner_alert_targets(conn)
+
+    # ── T4.1 — שיוך עובדת זיכרון להודעה שממנה נגזרה ──
+    # עמודה לטבלה **קיימת**, ולכן כאן. בלעדיה `deleted_business_messages`
+    # מוחק את ההודעה ומשאיר את מה שחולץ ממנה — כלומר חובת מחיקת
+    # הנגזרות הופכת להצהרה.
+    _ensure_column(
+        conn, "customer_facts", "source_message_id",
+        "INTEGER REFERENCES conversations(id) ON DELETE SET NULL",
+    )

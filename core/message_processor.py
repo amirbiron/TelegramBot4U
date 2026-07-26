@@ -176,6 +176,12 @@ def process_incoming_message(
     # אמר את זה במפורש, ואין טעם לבקש ממנו לנסח מחדש.
     if intent == Intent.HUMAN_AGENT:
         is_handoff = True
+    # בקשת מחיקה כופה handoff — ולא מחיקה. שתי סיבות: (א) ה-regex הוא
+    # היוריסטיקה ומחיקה בלתי הפיכה, ולכן ההחלטה של בעל העסק; (ב) משפט
+    # הגישור ("אבדוק ואחזור אליך") אינו מבטיח כלום, בעוד תשובת LLM
+    # חופשית עלולה לומר "מחקתי" כשלא נמחק דבר.
+    if intent == Intent.DELETE_REQUEST:
+        is_handoff = True
     answer = sanitize_outgoing(raw_answer)
 
     if is_handoff:

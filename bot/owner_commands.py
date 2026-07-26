@@ -18,6 +18,9 @@
 במקום לשבור את ההודעה או להיעלם. לכן אין כאן `**הדגשה**`: היא הייתה
 מוצגת ללקוח כככוכביות. ההדגשה נעשית בניסוח ובאימוג'י.
 
+**‏`/delete` דורש reply תמיד** — אין גרסה גלובלית. הפעולה בלתי הפיכה,
+וההגנה היחידה שעובדת היא שהבעלים חייב להצביע על התראה ספציפית.
+
 **‏`/pause` ממוקד:** הבעלים עונה `/pause` **בתגובה** להתראה על לקוח
 מסוים ⇒ מושתקת רק אותה שיחה. בלי reply ⇒ ה-autopilot הגלובלי נכבה.
 המיפוי מהתראה ללקוח יושב ב-`owner_alert_targets` (‏`owner_channel`
@@ -101,6 +104,7 @@ async def on_owner_command(update, context) -> None:
         "pause": _cmd_pause,
         "resume": _cmd_resume,
         "status": _cmd_status,
+        "delete": _cmd_delete,
     }.get(command)
     if handler is None:
         return
@@ -152,6 +156,41 @@ def _cmd_resume(msg, conn: dict) -> str:
     if not was_off:
         return "המענה האוטומטי כבר היה דלוק — לא שיניתי כלום."
     return "חזרתי לענות. שיחות שהשתקת בנפרד נשארו מושתקות עד ה-timeout שלהן."
+
+
+def _cmd_delete(msg, conn: dict) -> str:
+    """מחיקת כל המידע על לקוח — אישור בקשת מחיקה (‏T4.2).
+
+    **דורש reply, תמיד.** אין גרסה גלובלית ואין "האם אתה בטוח": הפעולה
+    בלתי הפיכה, וההגנה היחידה שעובדת היא שהבעלים חייב להצביע על התראה
+    ספציפית. ‏`/delete` בלי reply אינו מוחק כלום ומסביר למה.
+    """
+    target = _reply_target(msg)
+    if not target:
+        return (
+            "‏/delete מוחק את כל המידע על לקוח אחד, והפעולה בלתי הפיכה.\n"
+            "לכן הוא עובד רק בתגובה להתראה על אותו לקוח — ככה אין מצב "
+            "שנמחק את הלקוח הלא נכון.\n"
+            "גלול להתראה על בקשת המחיקה וענה עליה /delete."
+        )
+
+    user_id = target["user_id"]
+    try:
+        result = db.delete_user_data(user_id)
+    except Exception:
+        logger.error("owner_commands: המחיקה נכשלה", exc_info=True)
+        return "המחיקה נכשלה. הבקשה נשמרה ביומן — נסה שוב, ואם זה חוזר פנה אלינו."
+
+    if result.get("already_in_progress"):
+        return "הבקשה כבר בעיבוד."
+
+    total = sum(v for k, v in result.items() if isinstance(v, int) and v > 0)
+    logger.info("owner_commands: בוצעה מחיקת מידע לפי אישור הבעלים")
+    return (
+        f"נמחק. {total} רשומות הוסרו — היסטוריית השיחה, הסיכומים, עובדות "
+        "הזיכרון והפרופיל.\n"
+        "המחיקה נרשמה ביומן ההוכחות. אם הלקוח יכתוב שוב, הוא יתחיל מדף חלק."
+    )
 
 
 def _cmd_status(msg, conn: dict) -> str:

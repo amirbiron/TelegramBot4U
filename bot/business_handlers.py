@@ -370,14 +370,24 @@ async def on_edited_business_message(update, context) -> None:
         logger.info("edited_business_message: עודכנו %d עותקים", updated)
     except Exception:
         logger.error("עדכון ההודעה שנערכה נכשל", exc_info=True)
+        return
+
+    # הנוסח הישן ממשיך לחיות בתוך הסיכום אם ההודעה כבר נכללה בו — והוא
+    # זה שנשלח ל-LLM בכל פנייה. לקוח שערך הודעה כדי להסיר פרט שמסר
+    # בטעות היה ממשיך לראות אותו משפיע על התשובות (‏T4.1).
+    try:
+        db.invalidate_summary_for_message(msg.chat.id, msg.message_id)
+    except Exception:
+        logger.error("ביטול הסיכום אחרי עריכה נכשל", exc_info=True)
 
 
 async def on_deleted_business_messages(update, context) -> None:
-    """הודעות נמחקו אצל הלקוח — מוחקים את העותקים מיידית.
+    """הודעות נמחקו אצל הלקוח — מוחקים את העותקים ואת הנגזרות מיידית.
 
     זו **חובת פרטיות, לא אופציה** (‏PLAN §6): טלגרם הודיעה שהתוכן נמחק,
-    ולכן העותק שלנו חייב להימחק. המחיקה כוללת רישום ב-consent_ledger.
-    נגזרות (עובדות זיכרון שנחלצו מההודעות) — ‏T4.1.
+    ולכן העותק שלנו חייב להימחק — כולל עובדות זיכרון שנגזרו ממנו וסיכום
+    השיחה שהוא נכנס אליו (‏T4.1, המימוש ב-`delete_messages_by_tg_ids`).
+    המחיקה נרשמת ב-consent_ledger עם המונים פר-סוג.
     """
     deleted = update.deleted_business_messages
     if deleted is None:
@@ -393,7 +403,6 @@ async def on_deleted_business_messages(update, context) -> None:
 
     try:
         removed = db.delete_messages_by_tg_ids(chat_id, message_ids)
-        logger.info("deleted_business_messages: נמחקו %d עותקים", removed)
     except Exception:
         logger.error("מחיקת העותקים נכשלה", exc_info=True)
         return
@@ -404,7 +413,7 @@ async def on_deleted_business_messages(update, context) -> None:
         record_consent_event(
             user_id=str(chat_id), channel=db.CHANNEL,
             event_type=EVENT_DELETION_COMPLETED,
-            metadata={"source": "deleted_business_messages", "count": removed},
+            metadata={"source": "deleted_business_messages", **removed},
         )
     except Exception:
         logger.error("רישום המחיקה ב-consent_ledger נכשל", exc_info=True)

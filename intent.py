@@ -31,6 +31,10 @@ class Intent(Enum):
     LOCATION = "location"
     HUMAN_AGENT = "human_agent"
     COMPLAINT = "complaint"
+    # בקשת מחיקה בשפה חופשית ("תמחקו את המידע שלי") — זכות לפי תיקון 13.
+    # **לעולם לא מתבצעת אוטומטית:** ‏regex הוא היוריסטיקה, ומחיקה היא
+    # בלתי הפיכה. הכוונה מייצרת התראה לבעלים, והוא מאשר (‏T4.2).
+    DELETE_REQUEST = "delete_request"
     GENERAL = "general"
 
 
@@ -79,10 +83,29 @@ _HUMAN_AGENT_PATTERN = re.compile(
 )
 
 
+_DELETE_REQUEST_PATTERN = re.compile(
+    r"("
+    r"תמחק(?:ו|י)?\s*(?:לי\s*)?(?:את\s*)?(?:כל\s*)?(?:ה?מידע|ה?נתונים|ה?פרטים|ה?היסטוריה)"
+    r"|(?:מחק|למחוק)\s*(?:לי\s*)?(?:את\s*)?(?:כל\s*)?(?:ה?מידע|ה?נתונים|ה?פרטים)\s*שלי"
+    r"|אני\s*(?:רוצה|מבקש(?:ת)?)\s*(?:ש?תמחקו|למחוק)"
+    r"|(?:תסירו|להסיר)\s*(?:אותי|את\s*הפרטים\s*שלי)"
+    r"|אל\s*תשמרו\s*(?:עלי|את\s*)"
+    r"|delete\s*(?:all\s*)?my\s*(?:data|info|information|details)"
+    r"|(?:remove|erase)\s*(?:all\s*)?my\s*(?:data|info|details)"
+    r"|forget\s*(?:everything\s*)?about\s*me"
+    r")",
+    re.IGNORECASE,
+)
+
+
 # ─── Regex מלא — כל הכוונות ────────────────────────────────────────────
 _FALLBACK_PATTERNS: list[tuple[Intent, re.Pattern]] = [
     (Intent.GREETING, _GREETING_PATTERN),
     (Intent.FAREWELL, _FAREWELL_PATTERN),
+    # DELETE_REQUEST ראשון מבין כוונות הפעולה: "תמחקו את המידע שלי,
+    # אני רוצה לדבר עם מישהו" הוא קודם כול בקשת מחיקה — זו זכות לפי
+    # חוק, והיא גוברת על בקשה לנציג.
+    (Intent.DELETE_REQUEST, _DELETE_REQUEST_PATTERN),
     # HUMAN_AGENT לפני כל דפוס התיוג: הוא היחיד שמייצר פעולה, ואסור
     # שדפוס תיוג יגנוב אותו. "כמה יעלה לדבר עם בעל העסק?" מכיל גם מחיר
     # וגם בקשה לאדם — הבקשה לאדם היא שמשנה מה קורה.
@@ -169,6 +192,8 @@ _INTENT_TOOL = {
                         "- pricing: שאלה על מחיר, עלות, תעריף\n"
                         "- location: שאלה על כתובת, מיקום, הגעה\n"
                         "- human_agent: בקשה לדבר עם בעל העסק/אדם אמיתי\n"
+                        "- delete_request: בקשה למחוק את המידע/הנתונים "
+                        "שנשמרו על הלקוח\n"
                         "- complaint: תלונה, תסכול, חוויה רעה\n"
                         "- general: כל שאלה אחרת"
                     ),
@@ -189,6 +214,7 @@ _LLM_SYSTEM_PROMPT = (
     '- "איפה זה?" → location\n'
     '- "אני מתוסכל" → complaint\n'
     '- "אפשר לדבר עם דנה?" → human_agent\n'
+    '- "תמחקו את כל המידע שלי" → delete_request\n'
     "אם לא ברור — סווג כ-general."
 )
 

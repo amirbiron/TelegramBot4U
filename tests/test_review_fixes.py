@@ -667,6 +667,11 @@ class TestOwnerRepliesHaveNoMarkdown:
     """אין `parse_mode` בריפו — סימני Markdown היו מוצגים ככוכביות."""
 
     def _texts(self) -> list[str]:
+        """המחרוזות שנשלחות בפועל לבעלים — בלי docstrings.
+
+        ה-docstrings הם תיעוד למפתח ולא הודעה, ולכן הדגשות בהם מותרות
+        (וגם רצויות). בלי ההבחנה הזו הטסט היה נכשל על תיעוד תקין.
+        """
         import ast
         import pathlib
 
@@ -674,10 +679,16 @@ class TestOwnerRepliesHaveNoMarkdown:
         tree = ast.parse(source)
         out = []
         for node in ast.walk(tree):
-            # רק גוף הפונקציות — ה-docstring של המודול מותר בהדגשות
-            if isinstance(node, ast.FunctionDef) and node.name.startswith("_cmd_"):
-                for sub in ast.walk(node):
-                    if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+            if not (isinstance(node, ast.FunctionDef) and node.name.startswith("_cmd_")):
+                continue
+            docstrings = {
+                ast.get_docstring(fn, clean=False)
+                for fn in ast.walk(node)
+                if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
+                    if sub.value not in docstrings:
                         out.append(sub.value)
         return out
 

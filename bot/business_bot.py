@@ -60,7 +60,7 @@ def register_handlers(app: Application) -> None:
 
     app.add_handler(
         CommandHandler(
-            ["pause", "resume", "status"], on_owner_command,
+            ["pause", "resume", "status", "delete"], on_owner_command,
             filters=filters.ChatType.PRIVATE,
         )
     )

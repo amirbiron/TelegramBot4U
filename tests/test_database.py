@@ -92,11 +92,11 @@ class TestConversations:
         db.save_message("1", "דנה", "user", "א", tg_chat_id=10, tg_message_id=1)
         db.save_message("1", "דנה", "user", "ב", tg_chat_id=10, tg_message_id=2)
         db.save_message("1", "דנה", "user", "ג", tg_chat_id=10, tg_message_id=3)
-        assert db.delete_messages_by_tg_ids(10, [1, 3]) == 2
+        assert db.delete_messages_by_tg_ids(10, [1, 3])["conversations"] == 2
         assert [m["message"] for m in db.get_conversation_history("1")] == ["ב"]
 
     def test_delete_by_tg_ids_empty_list(self, default_tenant_db):
-        assert db.delete_messages_by_tg_ids(10, []) == 0
+        assert db.delete_messages_by_tg_ids(10, [])["conversations"] == 0
 
     def test_authored_by_recorded(self, default_tenant_db):
         db.save_message("1", "דנה", "assistant", "עניתי בעצמי", authored_by="owner")

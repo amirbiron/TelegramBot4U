@@ -262,8 +262,37 @@ async def dispatch_result(bot, result, msg, conn: dict, display_name: str) -> No
                 logger.error("שמירת התשובה ב-DB נכשלה", exc_info=True)
 
     if result.action == "handoff":
+        # בקשת מחיקה מקבלת התראה משלה: היא דורשת **פעולה** של הבעלים
+        # ולא רק ידיעה, והניסוח אומר לו איך לאשר.
+        from intent import Intent
+
+        is_delete_request = result.intent == Intent.DELETE_REQUEST
+        notify_fn = (
+            owner_channel.notify_deletion_request
+            if is_delete_request
+            else owner_channel.notify_handoff
+        )
+        if is_delete_request:
+            # הבקשה נרשמת ביומן **לפני** ההתראה ובלי תלות בהצלחתה: רגע
+            # הבקשה הוא שמתחיל את השעון החוקי, וההוכחה שהיא הוגשה לא
+            # יכולה להיות תלויה בכך שהבעלים אישר — דווקא כשהוא לא אישר
+            # היא נחוצה. הרשומה ב-`delete_user_data` היא אירוע אחר:
+            # פתיחת ביצוע המחיקה. ה-`origin` במטא הוא מה שמבחין ביניהן.
+            try:
+                from utils.consent_ledger import (
+                    EVENT_DELETION_REQUESTED,
+                    record_consent_event,
+                )
+
+                record_consent_event(
+                    user_id=user_id, channel=db.CHANNEL,
+                    event_type=EVENT_DELETION_REQUESTED,
+                    metadata={"origin": "customer_message"},
+                )
+            except Exception:
+                logger.error("רישום בקשת המחיקה ביומן נכשל", exc_info=True)
         try:
-            await owner_channel.notify_handoff(
+            await notify_fn(
                 bot, conn, display_name, result.handoff_reason,
                 target=(user_id, str(chat_id)),
             )

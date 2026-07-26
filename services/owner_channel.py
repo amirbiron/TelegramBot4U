@@ -223,6 +223,30 @@ async def notify_handoff(
     )
 
 
+async def notify_deletion_request(
+    bot, conn: dict, display_name: str, question: str,
+    target: tuple[str, str] | None = None,
+) -> bool:
+    """הלקוח ביקש למחוק את המידע שלו — זכות לפי חוק, והשעון רץ.
+
+    **בלי דה-דופ**: בקשה חוזרת אינה רעש אלא הסלמה. הניסוח אומר לבעלים
+    בדיוק מה לעשות, כי זו פעולה שהוא צריך לבצע ולא רק לדעת עליה.
+    """
+    quoted = question.strip()
+    if len(quoted) > 300:
+        quoted = quoted[:300].rstrip() + "…"
+    return await notify(
+        bot, conn,
+        f"🗑️ {display_name} ביקש למחוק את המידע שנשמר עליו:\n"
+        f"«{quoted}»\n\n"
+        "זו זכות לפי חוק ואי אפשר להתעלם ממנה. עניתי לו שאבדוק ואחזור — "
+        "לא הבטחתי כלום ולא מחקתי כלום.\n"
+        "לאישור המחיקה: ענה /delete בתגובה להודעה הזו. הפעולה בלתי הפיכה "
+        "ומוחקת את כל ההיסטוריה, הסיכומים ועובדות הזיכרון שלו.",
+        target=target,
+    )
+
+
 async def notify_media(
     bot, conn: dict, display_name: str, user_id: str = "",
 ) -> bool:

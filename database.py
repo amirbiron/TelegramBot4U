@@ -273,7 +273,14 @@ def init_db():
                 last_confirmed_at   TEXT DEFAULT (datetime('now')),
                 access_count        INTEGER DEFAULT 0,
                 resolved_at         TEXT,
-                resolution_evidence TEXT
+                resolution_evidence TEXT,
+                -- ההודעה שממנה נגזרה העובדה (‏conversations.id).
+                -- **זה מה שהופך את חובת מחיקת הנגזרות לאכיפה ולא להצהרה:**
+                -- בלי הקישור, `deleted_business_messages` מוחק את ההודעה
+                -- ומשאיר את מה שחולץ ממנה. ‏NULL = עובדה שבעל העסק הזין
+                -- ידנית, ואין לה מקור בהתכתבות.
+                -- העמודה מוגדרת גם ב-migrations.py, ל-DB קיים.
+                source_message_id   INTEGER REFERENCES conversations(id) ON DELETE SET NULL
             );
 
             -- ── פנקס הסכמות פסאודונימי (תיקון 13) ───────────────────────
@@ -532,23 +539,95 @@ def update_message_by_tg_id(tg_chat_id: int, tg_message_id: int, new_text: str) 
         return cur.rowcount or 0
 
 
-def delete_messages_by_tg_ids(tg_chat_id: int, tg_message_ids: list[int]) -> int:
-    """מחיקת העותקים אחרי deleted_business_messages. מחזיר כמה נמחקו.
+def delete_messages_by_tg_ids(tg_chat_id: int, tg_message_ids: list[int]) -> dict:
+    """מחיקת העותקים **והנגזרות** אחרי deleted_business_messages.
 
-    חובת פרטיות ולא אופציה (PLAN §6): טלגרם הודיעה שההודעות נמחקו אצל
-    המשתמש, ולכן העותק שלנו חייב להימחק מיד.
+    חובת פרטיות ולא אופציה (‏PLAN §6, ‏CLAUDE.md): טלגרם הודיעה שהתוכן
+    נמחק אצל המשתמש, ולכן העותק שלנו חייב להימחק מיד — **כולל מה שנגזר
+    ממנו**. מחיקת שורת ההודעה בלבד משאירה את התוכן חי בשני מקומות:
+
+    1. **עובדות זיכרון** שחולצו ממנה (`customer_facts.source_message_id`).
+    2. **סיכום השיחה**, אם ההודעה כבר סוכמה. אי אפשר לנתח סיכום שנוצר
+       ע"י LLM ולהוציא ממנו את תרומתה של הודעה אחת, ולכן הסיכום נמחק
+       כולו. זה מאבד זיכרון ארוך-טווח על הלקוח — וזו העלות הנכונה:
+       ה-high-water mark מתאפס, וסיכום חדש ייבנה מההודעות ששרדו.
+
+    מחזיר counts פר-סוג. הכול בטרנזקציה אחת: מחיקה חלקית היא בדיוק המצב
+    שאסור להישאר בו.
     """
     ids = [int(i) for i in (tg_message_ids or [])]
+    result = {"conversations": 0, "customer_facts": 0, "summaries": 0}
     if not ids:
-        return 0
+        return result
+
     placeholders = ",".join("?" * len(ids))
     with get_connection() as conn:
-        cur = conn.execute(
-            f"DELETE FROM conversations WHERE tg_chat_id = ? "
+        rows = conn.execute(
+            f"SELECT id, user_id FROM conversations WHERE tg_chat_id = ? "
             f"AND tg_message_id IN ({placeholders})",
             (tg_chat_id, *ids),
+        ).fetchall()
+        if not rows:
+            return result
+
+        row_ids = [r["id"] for r in rows]
+        user_ids = {r["user_id"] for r in rows}
+        row_ph = ",".join("?" * len(row_ids))
+
+        # 1 — עובדות זיכרון שנגזרו מההודעות האלה
+        cur = conn.execute(
+            f"DELETE FROM customer_facts WHERE source_message_id IN ({row_ph})",
+            row_ids,
         )
-        return cur.rowcount or 0
+        result["customer_facts"] = cur.rowcount or 0
+
+        # 2 — הסיכום, אם ההודעה נכנסה אליו. מחיקה גורפת פר-משתמש ולא
+        #     לפי high-water mark: הסיכום ממוזג רקורסיבית, ולכן גם תוכן
+        #     ישן ממשיך לחיות בו אחרי שהמונה התקדם.
+        for user_id in user_ids:
+            cur = conn.execute(
+                "DELETE FROM conversation_summaries WHERE user_id = ?", (user_id,),
+            )
+            result["summaries"] += cur.rowcount or 0
+
+        # 3 — ההודעות עצמן, **אחרונות**: מחיקתן קודם הייתה מותירה את
+        #     ה-ids של הנגזרות בלי מקור לשייך אליו.
+        cur = conn.execute(
+            f"DELETE FROM conversations WHERE id IN ({row_ph})", row_ids,
+        )
+        result["conversations"] = cur.rowcount or 0
+
+    logger.info("deleted_business_messages: נמחקו %s", result)
+    return result
+
+
+def invalidate_summary_for_message(tg_chat_id: int, tg_message_id: int) -> bool:
+    """מחיקת הסיכום אם ההודעה שנערכה כבר נכנסה אליו.
+
+    ‏`edited_business_message` מעדכן את העותק ב-`conversations`, אבל אם
+    ההודעה כבר סוכמה, **הנוסח הישן ממשיך לחיות בתוך הסיכום** — והוא זה
+    שנשלח ל-LLM בכל פנייה. לקוח שערך הודעה כדי להסיר ממנה פרט שמסר
+    בטעות היה ממשיך לראות אותו משפיע על התשובות.
+
+    יורה רק כשההודעה כבר סוכמה. עריכה של הודעה טרייה אינה דורשת כלום —
+    הנוסח המעודכן ייכנס לסיכום הבא ממילא.
+    """
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, user_id FROM conversations "
+            "WHERE tg_chat_id = ? AND tg_message_id = ?",
+            (int(tg_chat_id), int(tg_message_id)),
+        ).fetchone()
+        if row is None:
+            return False
+        if row["id"] > _last_summarized_message_id(conn, row["user_id"]):
+            return False
+        cur = conn.execute(
+            "DELETE FROM conversation_summaries WHERE user_id = ?", (row["user_id"],),
+        )
+    if cur.rowcount:
+        logger.info("edited_business_message: הסיכום בוטל — ההודעה כבר נכללה בו")
+    return bool(cur.rowcount)
 
 
 def get_unique_users() -> list[dict]:
@@ -1103,6 +1182,7 @@ def add_customer_fact(
     user_id: str, fact_type: str, content: str, confidence: float,
     business_id: str = "default", source: str = "inferred",
     requires_consent: bool = False, status: str = "active", evidence: str = "",
+    source_message_id: int | None = None,
 ) -> Optional[int]:
     """הוספת עובדת זיכרון. מחזיר את המזהה, או None אם כבר קיימת זהה
     (‏partial UNIQUE על facts פעילים — dedup ברמת DB)."""
@@ -1111,10 +1191,10 @@ def add_customer_fact(
             cur = conn.execute(
                 "INSERT INTO customer_facts "
                 "(user_id, business_id, fact_type, content, confidence, source, "
-                " requires_consent, status, evidence) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " requires_consent, status, evidence, source_message_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (user_id, business_id, fact_type, content, confidence, source,
-                 1 if requires_consent else 0, status, evidence),
+                 1 if requires_consent else 0, status, evidence, source_message_id),
             )
             return cur.lastrowid
     except sqlite3.IntegrityError:
