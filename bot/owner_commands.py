@@ -185,6 +185,22 @@ def _cmd_delete(msg, conn: dict) -> str:
         return "הבקשה כבר בעיבוד."
 
     total = sum(v for k, v in result.items() if isinstance(v, int) and v > 0)
+
+    # מחיקה חלקית אינה מחיקה. ‏`delete_user_data` ממשיך לטבלה הבאה כשאחת
+    # נכשלת (וזה נכון — עדיף למחוק את מה שאפשר), אבל לדווח על זה "נמחק"
+    # פירושו לתת לבעלים לענות ללקוח שהמידע הוסר בזמן שחלק ממנו קיים.
+    # מול בקשת מחיקה לפי חוק, דיווח שגוי גרוע מכישלון גלוי.
+    if db.deletion_was_incomplete(result):
+        failed = db.deletion_failed_table_count(result)
+        logger.error("owner_commands: המחיקה הושלמה חלקית — %d טבלאות נכשלו", failed)
+        return (
+            "⚠️ המחיקה בוצעה חלקית — לא הכול הוסר.\n"
+            f"{total} רשומות הוסרו, אבל {failed} טבלאות נכשלו — חלק "
+            "מהמידע עדיין קיים.\n"
+            "אל תדווח ללקוח שהמידע נמחק. הריצו /delete שוב בתגובה לאותה "
+            "התראה; אם זה חוזר — פנו אלינו, זה דורש טיפול."
+        )
+
     logger.info("owner_commands: בוצעה מחיקת מידע לפי אישור הבעלים")
     return (
         f"נמחק. {total} רשומות הוסרו — היסטוריית השיחה, הסיכומים, עובדות "

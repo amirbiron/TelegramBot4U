@@ -15,7 +15,7 @@ tenant אחר ל-6 שניות.
 """
 
 import asyncio
-import os
+import threading
 import time
 
 import pytest
@@ -62,29 +62,32 @@ class TestTenantIsolation:
         )
 
     async def test_a_single_tenant_cannot_take_the_whole_pool(self):
-        """התקרה פר-tenant נאכפת בפועל, ולא רק מוגדרת."""
+        """התקרה פר-tenant נאכפת בפועל, ולא רק מוגדרת.
+
+        נמדדת מקביליות **אמיתית** — מונה שהעבודה עצמה מעלה ומורידה —
+        ולא `Semaphore._value`. הסמפור הוא המנגנון הנבדק, ומדידה דרכו
+        הייתה מאשרת שהוא עקבי עם עצמו במקום שהוא באמת מגביל.
+        """
         active = 0
         peak = 0
-        lock = asyncio.Lock()
+        counter_lock = threading.Lock()
 
         def _track() -> None:
-            time.sleep(FAKE_LLM_SECONDS)
+            nonlocal active, peak
+            with counter_lock:
+                active += 1
+                peak = max(peak, active)
+            try:
+                time.sleep(FAKE_LLM_SECONDS)
+            finally:
+                with counter_lock:
+                    active -= 1
 
         async def one() -> None:
-            nonlocal active, peak
             with tenant_context("noisy"):
-                async with lock:
-                    pass
                 await pipeline_executor.run_pipeline(_track)
 
-        # נמדד דרך הסמפור עצמו: כמה מקומות תפוסים בשיא.
-        sem = pipeline_executor._semaphore("noisy")
         tasks = [asyncio.create_task(one()) for _ in range(BURST)]
-        for _ in range(12):
-            await asyncio.sleep(0.02)
-            in_flight = pipeline_executor.PER_TENANT_LIMIT - sem._value
-            active = in_flight
-            peak = max(peak, active)
         await asyncio.gather(*tasks)
 
         assert peak <= pipeline_executor.PER_TENANT_LIMIT, (
@@ -102,7 +105,12 @@ class TestExecutorSizing:
         וברירת המחדל של `to_thread` נותנת 5 threads לכל הפלטפורמה.
         """
         assert pipeline_executor.POOL_SIZE >= 16
-        assert pipeline_executor.POOL_SIZE > (os.cpu_count() or 1) + 4
+        # הקביעה היא שהגודל **קבוע** ולא נגזר מהמעבד. השוואה מול
+        # `cpu_count + 4` הייתה נכשלת על runner עם 64 ליבות — כלומר
+        # הטסט עצמו היה תלוי במכונה, בדיוק החולשה שהוא בא לשלול.
+        assert pipeline_executor.POOL_SIZE == 32, (
+            "‏POOL_SIZE אמור להיות ערך קבוע; שינוי מכוון דורש עדכון הטסט"
+        )
 
     def test_per_tenant_limit_leaves_room_for_others(self):
         """תקרה שגדולה מדי שקולה לאין תקרה."""

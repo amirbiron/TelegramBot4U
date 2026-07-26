@@ -224,6 +224,45 @@ class TestDeleteRequestIntent:
         assert result.action == "handoff"
         assert result.intent == Intent.DELETE_REQUEST
 
+    def test_the_llm_answer_is_replaced_not_just_backfilled(
+        self, default_tenant_db, monkeypatch,
+    ):
+        """‏handoff לבדו לא מספיק — הטקסט ללקוח היה נשאר תשובת ה-LLM.
+
+        מודל שנשאל "תמחקו את המידע שלי" עונה באופן טבעי "בוצע, הכול
+        נמחק". זו הבטחה שקרית על פעולה שדורשת אישור אנושי ועוד לא
+        קרתה, והיא נשלחת ללקוח כלשונה כל עוד היא אינה ריקה.
+        """
+        from core import message_processor as mp
+
+        db.update_bot_settings(handoff_bridge_message="אבדוק ואחזור אליך.")
+        monkeypatch.setattr(
+            mp, "generate_answer",
+            lambda **kw: {"answer": "בטח, מחקתי הכל!", "kb_empty": False,
+                          "kb_tokens": 1, "llm_failed": False},
+        )
+        result = mp.process_incoming_message(
+            "1", "תמחקו את המידע שלי", {"display_name": "דנה"},
+        )
+        assert result.action == "handoff"
+        assert "מחקתי" not in result.text
+        assert result.text == "אבדוק ואחזור אליך."
+
+    def test_other_handoffs_keep_the_llm_answer(self, default_tenant_db, monkeypatch):
+        """ההחלפה חלה על בקשת מחיקה בלבד ולא על כל handoff."""
+        from core import message_processor as mp
+
+        monkeypatch.setattr(
+            mp, "generate_answer",
+            lambda **kw: {"answer": "[HANDOFF] אבדוק מול בעל העסק", "kb_empty": False,
+                          "kb_tokens": 1, "llm_failed": False},
+        )
+        result = mp.process_incoming_message(
+            "1", "אני רוצה לדבר עם נציג", {"display_name": "דנה"},
+        )
+        assert result.action == "handoff"
+        assert "אבדוק מול בעל העסק" in result.text
+
     def test_nothing_is_deleted_automatically(self, default_tenant_db, monkeypatch):
         from core import message_processor as mp
 
@@ -307,6 +346,39 @@ class TestOwnerApproval:
             await oc.on_owner_command(type("U", (), {"message": msg})(), None)
             assert db.get_user(str(CUSTOMER_ID)) is not None
         assert msg.replies == []
+
+    async def test_partial_deletion_is_not_reported_as_success(
+        self, owner_chat, monkeypatch,
+    ):
+        """מחיקה חלקית שמדווחת כ"נמחק" גורמת לבעלים לשקר ללקוח.
+
+        ‏`delete_user_data` ממשיך לטבלה הבאה כשאחת נכשלת — וזה נכון,
+        עדיף למחוק את מה שאפשר. אבל התוצאה חייבת להיאמר: מול בקשת
+        מחיקה לפי חוק, דיווח שגוי גרוע מכישלון גלוי.
+        """
+        with tenant_context("acme"):
+            db.upsert_user(str(CUSTOMER_ID), "דנה", inbound=True)
+            db.record_owner_alert_target(
+                4242, str(CUSTOMER_ID), str(CUSTOMER_ID), owner_chat_id=str(OWNER_ID),
+            )
+
+        monkeypatch.setattr(
+            db, "delete_user_data",
+            lambda uid: {
+                "conversations": 3,
+                "__failed_tables__": ["customer_facts", "users"],
+                "__deletion_status__": "partial",
+            },
+        )
+        msg = self._msg("/delete", reply_to=self._replied())
+        with tenant_context("acme"):
+            await oc.on_owner_command(type("U", (), {"message": msg})(), None)
+
+        reply = msg.replies[0]
+        assert "חלקית" in reply
+        assert "אל תדווח ללקוח" in reply
+        # מפתחות הסימון הם פרט מימוש ואסור שיודלפו לבעלים
+        assert "__" not in reply
 
     async def test_deletion_is_recorded_in_the_ledger(self, owner_chat):
         from utils.consent_ledger import get_events_for_subject
@@ -412,9 +484,10 @@ class TestRequestIsRecordedOnArrival:
         requested = [e for e in events if e["event_type"] == "deletion_requested"]
         assert len(requested) == 1
         assert "customer_message" in (requested[0]["metadata_json"] or "")
-        # ועדיין לא נמחק כלום — הרישום אינו ביצוע.
-        with tenant_context("acme"):
-            assert not any(e["event_type"] == "deletion_completed" for e in events)
+        # ועדיין לא נמחק כלום — הרישום אינו ביצוע. נבדק על אותו
+        # ה-snapshot שנשלף אחרי הריצה; ‏tenant_context כאן היה מטעה,
+        # כי `events` כבר בזיכרון ואינו נקרא שוב מה-DB.
+        assert not any(e["event_type"] == "deletion_completed" for e in events)
 
     async def test_recorded_even_when_the_alert_fails(self, wired):
         """ההתראה לבעלים נכשלה — הראיה שהבקשה הוגשה לא הולכת לאיבוד."""

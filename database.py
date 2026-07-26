@@ -1329,6 +1329,21 @@ def _delete_user_data_impl(user_id: str) -> dict:
     return result
 
 
+def deletion_was_incomplete(result: dict) -> bool:
+    """האם תוצאת `delete_user_data` מעידה שחלק מהמידע שרד.
+
+    הקוראים לא צריכים להכיר את מפתחות הסימון — הם פרט מימוש של
+    הפונקציה הזאת, והחשיפה שלהם הובילה לכך שהם הודפסו בטעות בהודעות
+    לבעלים.
+    """
+    return result.get("__deletion_status__") in ("partial", "failed")
+
+
+def deletion_failed_table_count(result: dict) -> int:
+    """כמה טבלאות נכשלו במחיקה. ‏0 כשהכול הצליח."""
+    return len(result.get("__failed_tables__") or [])
+
+
 def purge_old_data(
     conversation_days: int = 365,
     consent_ledger_years: int = 5,

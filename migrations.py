@@ -39,8 +39,10 @@ def _rebuild_owner_alert_targets(conn) -> None:
     אחת היה משתיק את הלקוח של התראה אחרת.
 
     ‏SQLite אינו תומך בשינוי PRIMARY KEY, ולכן rebuild: טבלה חדשה,
-    העתקה, החלפה. הכול בתוך הטרנזקציה של `get_connection` — או שהמעבר
-    שלם, או שלא קרה.
+    העתקה, החלפה. ה-`BEGIN IMMEDIATE`/`COMMIT` יושבים **בתוך** הסקריפט
+    ולא סביבו: ‏`executescript` מבצע COMMIT משתמע לכל טרנזקציה פתוחה
+    לפני שהוא מתחיל, ולכן טרנזקציה חיצונית לא הייתה מגנה כאן על כלום.
+    בלי זה כשל בין ה-DROP ל-RENAME משאיר את ה-tenant בלי הטבלה בכלל.
 
     ה-DDL כאן **משוכפל** מ-`init_db` בכוונה: מיגרציה חייבת לתאר את
     הסכימה כפי שהייתה בזמן כתיבתה. אם `init_db` ישתנה בעתיד, המיגרציה
@@ -51,7 +53,16 @@ def _rebuild_owner_alert_targets(conn) -> None:
         return  # הטבלה לא קיימת, או שהיא כבר בסכימה החדשה
 
     logger.info("migration: rebuilding owner_alert_targets with a composite key")
-    conn.executescript("""
+
+    # ‏BEGIN מפורש, ולא הסתמכות על הטרנזקציה של `get_connection`:
+    # ‏`executescript` מבצע COMMIT משתמע לכל טרנזקציה פתוחה לפני שהוא
+    # מריץ את הסקריפט, ו-DDL ב-sqlite3 של פייתון רץ ממילא ב-autocommit.
+    # כלומר בלי השורה הזו ה-rebuild אינו אטומי: כשל בין ה-DROP ל-RENAME
+    # (או קריסה בדיוק שם) משאיר את ה-tenant **בלי הטבלה בכלל**, וכל
+    # התראה לבעלים מפסיקה להיות ניתנת לשיוך.
+    try:
+        conn.executescript("""
+        BEGIN IMMEDIATE;
         CREATE TABLE owner_alert_targets_new (
             owner_chat_id    TEXT NOT NULL,
             owner_message_id INTEGER NOT NULL,
@@ -71,7 +82,17 @@ def _rebuild_owner_alert_targets(conn) -> None:
         ALTER TABLE owner_alert_targets_new RENAME TO owner_alert_targets;
         CREATE INDEX IF NOT EXISTS idx_alert_targets_user
             ON owner_alert_targets(user_id);
-    """)
+        COMMIT;
+        """)
+    except Exception:
+        # ‏ROLLBACK עצמו עטוף: אם הכשל קרה אחרי ה-COMMIT שבסקריפט אין
+        # טרנזקציה פתוחה, ואסור שהניקוי ידרוס את השגיאה המקורית.
+        try:
+            conn.execute("ROLLBACK")
+        except Exception:
+            logger.error("migration: ROLLBACK אחרי כשל ב-rebuild נכשל", exc_info=True)
+        logger.error("migration: rebuild של owner_alert_targets נכשל — גולגל אחורה")
+        raise
 
 
 def run_migrations(conn) -> None:

@@ -85,16 +85,21 @@ async def run_pipeline(func, /, *args, **kwargs):
     """
     from tenancy import get_current_tenant
 
+    # ‏fail closed. הדרך היחידה שזה נכשל היא `MissingTenantContext`
+    # במצב STRICT — כלומר נתיב שלא קבע tenant, בדיוק מה שהמצב הזה נועד
+    # לחשוף. המשך ריצה היה מריץ את הצינור על ה-DB של ברירת המחדל
+    # ומאחד את כל הנתיבים האלה לדלי הוגנות אחד, כלומר הופך באג
+    # שאמור לצעוק לתקלה שקטה שכותבת לקובץ הלא נכון.
     try:
         tenant_id = get_current_tenant()
     except Exception:
-        logger.error("run_pipeline: כשל בזיהוי ה-tenant", exc_info=True)
-        tenant_id = ""
+        logger.error("run_pipeline: כשל בזיהוי ה-tenant — הריצה נעצרת", exc_info=True)
+        raise
 
     ctx = contextvars.copy_context()
     loop = asyncio.get_running_loop()
 
-    async with _semaphore(tenant_id or ""):
+    async with _semaphore(tenant_id):
         return await loop.run_in_executor(
             get_executor(), lambda: ctx.run(func, *args, **kwargs),
         )

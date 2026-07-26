@@ -4,6 +4,7 @@
 הכותרת של כל מחלקה אומרת מה נשבר אם הטסט ייכשל.
 """
 
+import sqlite3
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
@@ -851,57 +852,99 @@ class TestOwnerAlertTargetsMigration:
             ).fetchone()["c"]
         assert count == 1
 
+    def test_a_failure_mid_rebuild_leaves_the_table_intact(self, default_tenant_db):
+        """‏rebuild שנכשל באמצע חייב להשאיר את הטבלה הישנה.
+
+        ‏`executescript` מבצע COMMIT משתמע לכל טרנזקציה פתוחה לפני
+        שהוא מתחיל, ולכן טרנזקציה חיצונית לא הגנה כאן על כלום: כשל
+        בין ה-DROP ל-RENAME היה משאיר את ה-tenant **בלי הטבלה בכלל**,
+        וכל התראה לבעלים מפסיקה להיות ניתנת לשיוך.
+        """
+        import database as db
+        import migrations
+
+        with db.get_connection() as conn:
+            self._legacy_table(conn)
+
+            # ‏sqlite3.Connection הוא C extension ולא ניתן ל-patch
+            # ישירות; ‏proxy דק שמעביר הכול חוץ מ-executescript.
+            class _FailingConn:
+                def __init__(self, inner):
+                    self._inner = inner
+
+                def __getattr__(self, name):
+                    return getattr(self._inner, name)
+
+                def executescript(self, script):
+                    # מריצים עד ה-DROP (כולל) ואז מפילים — בדיוק החלון
+                    # שבו הטבלה המקורית כבר לא קיימת.
+                    self._inner.executescript(script.split("ALTER TABLE")[0])
+                    raise sqlite3.OperationalError("disk I/O error")
+
+            with pytest.raises(sqlite3.OperationalError):
+                migrations._rebuild_owner_alert_targets(_FailingConn(conn))
+
+            rows = conn.execute(
+                "SELECT user_id FROM owner_alert_targets"
+            ).fetchall()
+
+        # הטבלה קיימת, עם השורה שהייתה בה
+        assert [r["user_id"] for r in rows] == ["u1"]
+
 
 class TestFatalConfigStopsTheBoot:
     """שירות שעולה עם מפתח הצפנה שגוי עובר health check ונראה תקין,
     בעוד כל כתיבת סוד בו נכשלת בשקט."""
 
-    def test_broken_key_is_fatal(self, monkeypatch):
-        import config as _cfg
+    @pytest.fixture(autouse=True)
+    def _clean_fernet_cache(self):
+        """ה-cache מוצפן לפי מפתח, וטסט שמחליף מפתח חייב לרוקן אותו.
+
+        ב-fixture ולא בגוף הטסט: ניקוי בסוף הפונקציה **אינו** רץ
+        כשהטענה נכשלת, ואז מפתח שבור דולף לטסטים הבאים והכשל השני
+        מסתיר את הראשון.
+        """
         import utils.crypto as crypto
 
         crypto._fernet_cache.clear()
+        try:
+            yield
+        finally:
+            crypto._fernet_cache.clear()
+
+    def test_broken_key_is_fatal(self, monkeypatch):
+        import config as _cfg
+
         monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", "not-a-fernet-key")
         assert _cfg.fatal_config_errors()
-        crypto._fernet_cache.clear()
 
     def test_missing_key_is_not_fatal(self, monkeypatch):
         """חסר הוא לגיטימי — פיתוח מקומי, `--seed`, ‏tenant יחיד."""
         import config as _cfg
-        import utils.crypto as crypto
 
-        crypto._fernet_cache.clear()
         monkeypatch.delenv("SECRETS_ENCRYPTION_KEY", raising=False)
         assert _cfg.fatal_config_errors() == []
-        crypto._fernet_cache.clear()
 
     def test_valid_key_is_not_fatal(self, monkeypatch):
         import config as _cfg
         import utils.crypto as crypto
 
-        crypto._fernet_cache.clear()
         monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", crypto.generate_new_key())
         assert _cfg.fatal_config_errors() == []
-        crypto._fernet_cache.clear()
 
     def test_missing_webhook_url_is_only_a_warning(self, monkeypatch):
         """‏`--admin` בלי WEBHOOK_BASE_URL הוא מצב עבודה תקין."""
         import config as _cfg
         import utils.crypto as crypto
 
-        crypto._fernet_cache.clear()
         monkeypatch.setattr(_cfg, "WEBHOOK_BASE_URL", "", raising=False)
         monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", crypto.generate_new_key())
         assert any("WEBHOOK_BASE_URL" in e for e in _cfg.validate_config(require_bot=True))
         assert _cfg.fatal_config_errors() == []
-        crypto._fernet_cache.clear()
 
     def test_boot_raises_on_fatal_config(self, monkeypatch):
         import main
-        import utils.crypto as crypto
 
-        crypto._fernet_cache.clear()
         monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", "not-a-fernet-key")
         with pytest.raises(RuntimeError, match="תצורה פגומה"):
             main.create_wsgi_app(with_bots=False)
-        crypto._fernet_cache.clear()

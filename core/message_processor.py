@@ -184,6 +184,14 @@ def process_incoming_message(
         is_handoff = True
     answer = sanitize_outgoing(raw_answer)
 
+    # ‏handoff בלבד אינו מספיק כאן: הוא קובע שהבעלים יקבל התראה, אבל
+    # הטקסט שנשלח ללקוח נשאר תשובת ה-LLM. מודל שנשאל "תמחקו את המידע
+    # שלי" עונה באופן טבעי "בוצע, הכול נמחק" — הבטחה שקרית על פעולה
+    # שדורשת אישור אנושי ועדיין לא קרתה. לכן משפט הגישור **מחליף** את
+    # התשובה, ולא רק ממלא אותה כשהיא ריקה.
+    if intent == Intent.DELETE_REQUEST:
+        answer = _bridge_message()
+
     if is_handoff:
         fallback_count = consecutive_fallbacks + 1
 

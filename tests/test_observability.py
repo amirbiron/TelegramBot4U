@@ -69,6 +69,12 @@ def _log_call_args(tree: ast.AST) -> list[tuple[int, ast.expr]]:
             continue
         # הארגומנט הראשון הוא תבנית הפורמט — הערכים הם מהשני והלאה.
         found.extend((node.lineno, arg) for arg in node.args[1:])
+        # ‏`extra={...}` הוא נתיב שני לאותו לוג: הערכים שם מגיעים
+        # לפלט בדיוק כמו ארגומנטים רגילים. בלי הסריקה הזאת מעבר
+        # ל-structured logging היה עוקף את כל הבדיקה בשקט.
+        for kw in node.keywords:
+            if kw.arg == "extra":
+                found.append((node.lineno, kw.value))
     return found
 
 
@@ -130,6 +136,13 @@ class TestNoPiiInLogs:
         assert _mentions_forbidden(_log_call_args(tree)[0][1]) == "text"
         tree = ast.parse("logger.info('%s', f'{answer}')")
         assert _mentions_forbidden(_log_call_args(tree)[0][1]) == "answer"
+
+    def test_structured_extra_is_scanned(self):
+        """‏`extra={...}` מגיע לפלט כמו כל ארגומנט — ולכן נסרק."""
+        tree = ast.parse("logger.info('נשלח', extra={'q': msg.text})")
+        args = _log_call_args(tree)
+        assert args, "‏extra לא נסרק בכלל"
+        assert any(_mentions_forbidden(a) == "text" for _, a in args)
 
 
 class TestRequiredEvents:
