@@ -211,23 +211,10 @@ class TestIncomingFlow:
 
         assert len(bot.customer_messages) == 1
         sent = bot.customer_messages[0]
-        # התשובה עצמה מסיימת את ההודעה. לפניה שורת הגילוי (‏T4.3) —
-        # זו הפנייה הראשונה בצ'אט, ולכן היא משורשרת כאן ורק כאן.
-        assert sent["text"].endswith("תספורת עולה 120 ש\"ח")
-        assert "כאן העוזר" in sent["text"]
+        assert sent["text"] == "תספורת עולה 120 ש\"ח"
         # כל קריאה יוצאת ללקוח נושאת את מזהה החיבור
         assert sent["business_connection_id"] == CONNECTION_ID
         assert sent["chat_id"] == CUSTOMER_ID
-
-    async def test_second_message_has_no_disclosure(self, channel, fake_llm):
-        """שורת הגילוי היא חד-פעמית — גם דרך הצינור המלא."""
-        ctx, bot = channel
-        with tenant_context("acme"):
-            await bh.on_business_message(load_update("business_message_customer.json"), ctx)
-            await bh.on_business_message(load_update("business_message_customer.json"), ctx)
-
-        assert "כאן העוזר" in bot.customer_messages[0]["text"]
-        assert "כאן העוזר" not in bot.customer_messages[1]["text"]
 
     async def test_typing_action_sent_with_connection_id(self, channel, fake_llm):
         ctx, bot = channel

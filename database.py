@@ -157,10 +157,7 @@ def init_db():
                 message_count         INTEGER DEFAULT 0,
                 consecutive_fallbacks INTEGER DEFAULT 0,
                 send_failure_reason   TEXT DEFAULT '',
-                send_failure_at       TEXT,
-                -- מתי נשלחה שורת הגילוי לצ'אט הזה (‏T4.3). ריק = טרם.
-                -- העמודה מוגדרת גם ב-migrations.py, ל-DB קיים.
-                disclosure_sent_at    TEXT
+                send_failure_at       TEXT
             );
 
             -- ── פערי ידע ────────────────────────────────────────────────
@@ -250,11 +247,6 @@ def init_db():
                 media_bridge_message   TEXT NOT NULL DEFAULT
                                        'קיבלתי, אעבור על זה ואחזור אליך',
                 autopilot_enabled      INTEGER NOT NULL DEFAULT 1,
-                -- שורת הגילוי: ברירת המחדל **דלוקה**. זו חובת היידוע
-                -- (‏PLAN §6), והכיבוי הוא החלטה של בעל העסק שנרשמת
-                -- ב-consent_ledger. תבנית ריקה ⇒ הנוסח המובנה.
-                disclosure_enabled     INTEGER NOT NULL DEFAULT 1,
-                disclosure_template    TEXT DEFAULT '',
                 updated_at             TEXT DEFAULT (datetime('now'))
             );
             INSERT OR IGNORE INTO bot_settings (id) VALUES (1);
@@ -962,7 +954,6 @@ _SETTINGS_COLUMNS = (
     "tone", "custom_phrases", "custom_prompt", "full_system_prompt",
     "business_phone", "business_address", "business_website",
     "handoff_bridge_message", "media_bridge_message", "autopilot_enabled",
-    "disclosure_enabled", "disclosure_template",
 )
 
 
@@ -987,16 +978,6 @@ def update_bot_settings(**kwargs) -> None:
         conn.execute(
             f"UPDATE bot_settings SET {assignments}, updated_at = datetime('now') WHERE id = 1",
             tuple(fields.values()),
-        )
-
-
-def mark_disclosure_sent(user_id: str) -> None:
-    """סימון שנמסרה שורת הגילוי ללקוח. נקרא אחרי שליחה מוצלחת בלבד."""
-    with get_connection() as conn:
-        conn.execute(
-            "UPDATE users SET disclosure_sent_at = datetime('now') "
-            "WHERE user_id = ? AND disclosure_sent_at IS NULL",
-            (str(user_id),),
         )
 
 

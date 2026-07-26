@@ -45,10 +45,6 @@ EVENT_DELETION_COMPLETED = "deletion_completed"
 EVENT_DELETION_FAILED = "deletion_failed"
 EVENT_ACCESS_REQUESTED = "access_requested"
 EVENT_ACCESS_DELIVERED = "access_delivered"
-# החלטת בעל העסק על שורת הגילוי (‏T4.3). קטגוריה consent — זו‏
-# החלטה על הבסיס המשפטי מול לקוחות הקצה, לא פעולה תפעולית.
-EVENT_DISCLOSURE_ENABLED = "disclosure_enabled"
-EVENT_DISCLOSURE_DISABLED = "disclosure_disabled"
 
 EVENT_TYPE_CATEGORIES: dict[str, str] = {
     EVENT_CONSENT_GIVEN: CATEGORY_CONSENT,
@@ -61,8 +57,6 @@ EVENT_TYPE_CATEGORIES: dict[str, str] = {
     EVENT_DELETION_FAILED: CATEGORY_AUDIT,
     EVENT_ACCESS_REQUESTED: CATEGORY_AUDIT,
     EVENT_ACCESS_DELIVERED: CATEGORY_AUDIT,
-    EVENT_DISCLOSURE_ENABLED: CATEGORY_CONSENT,
-    EVENT_DISCLOSURE_DISABLED: CATEGORY_CONSENT,
 }
 
 CURRENT_PEPPER_VERSION = "v1"
