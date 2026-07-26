@@ -30,3 +30,6 @@ python-dotenv
 pytest
 pytest-asyncio
 ruff
+# ‏tests/test_deployment.py קורא את render.yaml. בלי זה הטסטים שמגנים
+# על תצורת הפרודקשן היו מדולגים בשקט — כלומר קיימים אבל לא רצים.
+PyYAML

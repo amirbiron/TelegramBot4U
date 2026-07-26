@@ -148,6 +148,43 @@ def start_bot_loop(flask_app) -> asyncio.AbstractEventLoop:
     return loop
 
 
+def create_wsgi_app(with_bots: bool = True):
+    """בניית אפליקציית Flask מלאה — הפאנל, ה-webhooks, וה-scheduler.
+
+    משותפת ל-`python main.py` ול-`gunicorn wsgi:app`, כדי ששני מסלולי
+    ההרצה לא ייפרדו בשקט: הבדל ביניהם פירושו שמה שנבדק בפיתוח אינו מה
+    שרץ בפרודקשן.
+
+    ‏`bootstrap()` **אינו** נקרא כאן — הוא באחריות הקורא, כי `--seed`
+    צריך אותו בלי לבנות אפליקציה.
+    """
+    from admin.app import create_admin_app
+    from config import validate_config
+
+    for err in validate_config(require_bot=with_bots, require_admin=True):
+        logger.warning("⚠ תצורה: %s", err)
+
+    flask_app = create_admin_app()
+    if not with_bots:
+        return flask_app
+
+    # ניקוי השתקות שנשארו מהריצה הקודמת — אחרת לקוחות נשארים בלי
+    # מענה אחרי קריסה, והם אפילו לא יודעים שיש בוט שאמור לענות.
+    cleanup_takeovers()
+    loop = start_bot_loop(flask_app)
+    from bot.webhook import register_webhook_routes
+
+    register_webhook_routes(flask_app)
+    start_manager_bot(loop)
+    # ה-scheduler עולה **רק** במצב המלא: ‏`--admin` מריץ פאנל בלבד,
+    # ולולאת בוטים אין לו. הרצת ה-digest שם הייתה נכשלת על כל tenant
+    # (אין אפליקציה לשלוח דרכה) ומציפה את הלוג.
+    from services import scheduler
+
+    scheduler.start(loop)
+    return flask_app
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="בוט ה-Secretary")
     parser.add_argument("--admin", action="store_true", help="פאנל בלבד, בלי בוטים")
@@ -160,31 +197,9 @@ def main() -> None:
         run_seed()
         return
 
-    from admin.app import create_admin_app, run_admin
-    from config import validate_config
+    from admin.app import run_admin
 
-    for err in validate_config(require_bot=not args.admin, require_admin=True):
-        logger.warning("⚠ תצורה: %s", err)
-
-    flask_app = create_admin_app()
-
-    if not args.admin:
-        # ניקוי השתקות שנשארו מהריצה הקודמת — אחרת לקוחות נשארים בלי
-        # מענה אחרי קריסה, והם אפילו לא יודעים שיש בוט שאמור לענות.
-        cleanup_takeovers()
-        loop = start_bot_loop(flask_app)
-        from bot.webhook import register_webhook_routes
-
-        register_webhook_routes(flask_app)
-        start_manager_bot(loop)
-        # ה-scheduler עולה **רק** במצב המלא: ‏`--admin` מריץ פאנל בלבד,
-        # ולולאת בוטים אין לו. הרצת ה-digest שם הייתה נכשלת על כל tenant
-        # (אין אפליקציה לשלוח דרכה) ומציפה את הלוג.
-        from services import scheduler
-
-        scheduler.start(loop)
-
-    run_admin(flask_app)
+    run_admin(create_wsgi_app(with_bots=not args.admin))
 
 
 def start_manager_bot(loop) -> None:

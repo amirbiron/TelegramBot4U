@@ -1,0 +1,118 @@
+# ‏Render blueprint — בוט ה-Secretary
+#
+# **תהליך יחיד, worker יחיד, instance יחיד.** זו לא בחירה של חיסכון אלא
+# האילוץ של הטופולוגיה (‏PLAN §4.7): התהליך מחזיק בזיכרון את לולאת
+# ה-asyncio, את אפליקציות ה-PTB של כל הבוטים-הבנים, ואת ה-scheduler.
+# עותק שני של כל אלה פירושו שני digests באותו יום, שני גיבויים, ושתי
+# אפליקציות שכותבות לאותו קובץ SQLite. ראה ההסבר המלא ב-`wsgi.py`.
+#
+# ‏SQLite על דיסק mounted הוא גם מה שמונע scale-out אופקי: המעבר
+# ל-Postgres הוא תנאי מוקדם לכל שינוי כאן.
+
+services:
+  - type: web
+    name: telegrambot4u
+    runtime: python
+    plan: starter
+    region: frankfurt          # קרוב לישראל — משפיע על הלטנסי מול טלגרם
+    numInstances: 1            # ראה ההערה למעלה. אל תגדיל.
+    branch: main
+
+    buildCommand: pip install -r requirements.txt
+
+    # ‏gunicorn ולא שרת הפיתוח של Flask.
+    #   --workers 1  — אילוץ הטופולוגיה (מסביר ב-wsgi.py)
+    #   --threads 8  — מכאן מגיעה המקבילוּת. ה-webhook מחזיר 200 מיד
+    #                  ומוסר את העבודה ללולאה, ולכן threads מספיקים.
+    #   --timeout 60 — ה-route עצמו מהיר; ה-timeout מכסה עליות איטיות.
+    #   **בלי --preload** — הוא ירים את לולאת הבוטים ב-master, וה-thread
+    #                      שלה לא שורד את ה-fork.
+    startCommand: gunicorn wsgi:app --workers 1 --threads 8 --timeout 60 --bind 0.0.0.0:$PORT
+
+    healthCheckPath: /health
+
+    # הדיסק הוא **הנתונים עצמם**: platform.db + קובץ לכל tenant + גיבויים.
+    # בלעדיו deploy מוחק את כל הלקוחות.
+    disk:
+      name: secretary-data
+      mountPath: /var/data
+      sizeGB: 5
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
+
+      # ─── אחסון ───
+      - key: DATA_DIR
+        value: /var/data
+      # הגיבוי על אותו דיסק מתמיד. יעד חיצוני (‏S3) הוא שדרוג נפרד —
+      # ‏`backup_service.set_upload_hook` הוא ה-seam לכך.
+      - key: BACKUP_DIR
+        value: /var/data/backups
+      - key: BACKUP_RETENTION_DAYS
+        value: "14"
+
+      # ─── multi-tenant ───
+      # ‏fail-loud: נתיב שלא קבע tenant context מרים חריגה במקום להגיש
+      # בשקט את ה-DB של ברירת המחדל. זה ההבדל בין באג לדליפת בידוד.
+      - key: TENANCY_STRICT
+        value: "true"
+
+      # ─── סודות (מוזנים בדשבורד, לא ב-git) ───
+      # ‏Fernet תקין בלבד — סיסמה חופשית נדחית בעליית התהליך.
+      # ייצור: python -m platform_cli gen-key
+      - key: SECRETS_ENCRYPTION_KEY
+        sync: false
+      - key: LEDGER_PEPPER_V1
+        sync: false
+
+      # ─── טלגרם ───
+      - key: WEBHOOK_BASE_URL
+        sync: false           # https://<service>.onrender.com
+      - key: MANAGER_BOT_TOKEN
+        sync: false
+      - key: MANAGER_BOT_USERNAME
+        sync: false
+      - key: MANAGER_WEBHOOK_SECRET
+        sync: false
+      # סוד נפרד לבוט הידני של שלב 1 — אותו סוד לשני ה-routes אומר
+      # שדליפה באחד פותחת גם את השני.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        sync: false
+
+      # ─── LLM ───
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4.1-mini
+      - key: LLM_TIMEOUT_SECONDS
+        value: "45"
+      - key: INTENT_TIMEOUT_SECONDS
+        value: "8"
+
+      # ─── פאנל ───
+      - key: ADMIN_USERNAME
+        value: admin
+      # עדיף hash על סיסמה גלויה:
+      # python -c "from werkzeug.security import generate_password_hash as g; print(g(input()))"
+      - key: ADMIN_PASSWORD_HASH
+        sync: false
+      - key: ADMIN_SECRET_KEY
+        generateValue: true
+      # ‏Render מסיים TLS לפנינו; ה-ProxyFix קורא X-Forwarded-Proto.
+      - key: ADMIN_COOKIE_SECURE
+        value: "true"
+
+      # ─── תזמון ───
+      - key: DIGEST_HOUR_LOCAL
+        value: "20"
+      - key: TAKEOVER_TIMEOUT_MINUTES
+        value: "120"
+
+      # ─── ניטור ───
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_ENVIRONMENT
+        value: production
