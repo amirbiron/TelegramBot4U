@@ -8,7 +8,6 @@
 #
 # ‏SQLite על דיסק mounted הוא גם מה שמונע scale-out אופקי: המעבר
 # ל-Postgres הוא תנאי מוקדם לכל שינוי כאן.
-
 services:
   - type: web
     name: telegrambot4u
@@ -17,9 +16,7 @@ services:
     region: frankfurt          # קרוב לישראל — משפיע על הלטנסי מול טלגרם
     numInstances: 1            # ראה ההערה למעלה. אל תגדיל.
     branch: main
-
     buildCommand: pip install -r requirements.txt
-
     # ‏gunicorn ולא שרת הפיתוח של Flask.
     #   --workers 1  — אילוץ הטופולוגיה (מסביר ב-wsgi.py)
     #   --threads 8  — מכאן מגיעה המקבילוּת. ה-webhook מחזיר 200 מיד
@@ -28,20 +25,16 @@ services:
     #   **בלי --preload** — הוא ירים את לולאת הבוטים ב-master, וה-thread
     #                      שלה לא שורד את ה-fork.
     startCommand: gunicorn wsgi:app --workers 1 --threads 8 --timeout 60 --bind 0.0.0.0:$PORT
-
     healthCheckPath: /health
-
     # הדיסק הוא **הנתונים עצמם**: platform.db + קובץ לכל tenant + גיבויים.
     # בלעדיו deploy מוחק את כל הלקוחות.
     disk:
       name: secretary-data
       mountPath: /var/data
       sizeGB: 5
-
     envVars:
       - key: PYTHON_VERSION
-        value: "3.11"
-
+        value: "3.11"        
       # ─── אחסון ───
       - key: DATA_DIR
         value: /var/data
@@ -51,13 +44,11 @@ services:
         value: /var/data/backups
       - key: BACKUP_RETENTION_DAYS
         value: "14"
-
       # ─── multi-tenant ───
       # ‏fail-loud: נתיב שלא קבע tenant context מרים חריגה במקום להגיש
       # בשקט את ה-DB של ברירת המחדל. זה ההבדל בין באג לדליפת בידוד.
       - key: TENANCY_STRICT
         value: "true"
-
       # ─── סודות (מוזנים בדשבורד, לא ב-git) ───
       # ‏Fernet תקין בלבד — סיסמה חופשית נדחית בעליית התהליך.
       # ייצור: python -m platform_cli gen-key
@@ -65,7 +56,6 @@ services:
         sync: false
       - key: LEDGER_PEPPER_V1
         sync: false
-
       # ─── טלגרם ───
       - key: WEBHOOK_BASE_URL
         sync: false           # https://<service>.onrender.com
@@ -81,7 +71,6 @@ services:
         sync: false
       - key: TELEGRAM_WEBHOOK_SECRET
         sync: false
-
       # ─── LLM ───
       - key: OPENAI_API_KEY
         sync: false
@@ -91,7 +80,6 @@ services:
         value: "45"
       - key: INTENT_TIMEOUT_SECONDS
         value: "8"
-
       # ─── פאנל ───
       - key: ADMIN_USERNAME
         value: admin
@@ -104,13 +92,11 @@ services:
       # ‏Render מסיים TLS לפנינו; ה-ProxyFix קורא X-Forwarded-Proto.
       - key: ADMIN_COOKIE_SECURE
         value: "true"
-
       # ─── תזמון ───
       - key: DIGEST_HOUR_LOCAL
         value: "20"
       - key: TAKEOVER_TIMEOUT_MINUTES
         value: "120"
-
       # ─── ניטור ───
       - key: SENTRY_DSN
         sync: false
