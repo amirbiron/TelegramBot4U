@@ -84,7 +84,7 @@
 - [x] **T4.4 ‏Backup.** העתק `backup_service.py` + ‏`platform_maintenance.py` (בלי ענפי FAISS); גיבוי לילי של כל tenant + ‏platform.db. קבלה: טסט שחזור מגיבוי.
 - [x] **T4.5 ‏Observability.** ‏Sentry; לוגים: כל קריאת LLM (מודל, משך, טוקנים), כל handoff, כל rate-limit hit, כל כשל שליחה עם סיווג (חלון/הרשאה/אחר) — בלי PII (טלפונים ממוסכים, בלי תוכן הודעות ב-INFO). קבלה: בדיקת גרפ שאין `msg.text` בלוגי INFO.
 - [x] **T4.6 מסמכים.** ‏privacy_data_matrix מלאה ומסונכרנת; ‏`docs/client_guide.md` (מדריך חיבור ללקוח עם הצילומים מ-V2); ‏README תפעולי (env, ‏deploy, ‏seed, ‏offboarding).
-- [ ] **T4.7 ‏Load sanity.** בדיקה ידנית מתועדת: פרץ הודעות לבוט אחד לא מזיז את הלטנסי של בוט שני; התנהגות תחת 429 מטלגרם (backoff של PTB).
+- [x] **T4.7 ‏Load sanity.** ‏`docs/load_sanity.md`. הבדיקה מצאה כשל אמיתי: הצינור רץ ב-`asyncio.to_thread`, שגודל ה-executor שלו הוא `cpu_count + 4` (‏5 threads על instance קטן), ולכן פרץ אצל לקוח אחד **כן** עיכב לקוח שני — נמדד 2s ⇐ 6s. תוקן ב-`core/pipeline_executor.py`: ‏executor ייעודי בגודל שנגזר מהעבודה + תקרה פר-לקוח. ‏429 מטלגרם הוא פר-בוט, וכל לקוח הוא בוט-בן נפרד. אכיפה: `tests/test_load_sanity.py` (נבדק שנכשל מול המימוש הישן).
 
 **DoD שלב 4:** פיילוט עם לקוח אמיתי אחד, שבוע רצוף, בלי התערבות ידנית בקוד.
 

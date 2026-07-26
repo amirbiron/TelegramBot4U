@@ -27,12 +27,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 import control_plane as cp
 import database as db
 from core.message_processor import process_incoming_message
+from core.pipeline_executor import run_pipeline
 from services import owner_channel, takeover_service
 
 logger = logging.getLogger(__name__)
@@ -212,10 +212,14 @@ async def on_business_message(update, context) -> None:
         await _handle_media(context.bot, msg, conn, user_id, display_name, chat_id)
         return
 
-    # 8 — הצינור: הכוונה, ה-LLM, וה-handoff. ‏to_thread כי הצינור
+    # 8 — הצינור: הכוונה, ה-LLM, וה-handoff. רץ ב-thread כי הוא
     #     סינכרוני (DB + LLM) ואסור לחסום את לולאת הבוט.
-    #     ‏contextvars מועתקים ל-thread ע"י to_thread, ולכן ה-tenant נשמר.
-    result = await asyncio.to_thread(
+    #     **לא** `asyncio.to_thread`: הוא מריץ על ה-executor של ברירת
+    #     המחדל, שגודלו `cpu_count + 4`, ולכן פרץ אצל tenant אחד היה
+    #     תופס את כל ה-threads ומעכב את השאר (נמדד: 2s ⇐ 6s).
+    #     ‏`run_pipeline` מוסיף executor ייעודי ותקרה פר-tenant, ומעתיק
+    #     את ה-contextvars במפורש כדי שה-tenant יעבור ל-thread.
+    result = await run_pipeline(
         process_incoming_message,
         user_id=user_id,
         text=msg.text,

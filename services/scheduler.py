@@ -86,6 +86,15 @@ async def _tick() -> None:
     ):
         try:
             await job()
+        except RuntimeError as exc:
+            # ‏tick שנתפס באמצע כיבוי התהליך: ה-executor כבר נסגר
+            # ואי אפשר לתזמן עבודה חדשה. זו לא תקלה — זה סדר הכיבוי,
+            # וכל deploy היה מייצר ממנו שגיאה ב-Sentry. מדווח כ-info
+            # ולא נבלע.
+            if "shutdown" in str(exc).lower():
+                logger.info("scheduler: %s דולג — התהליך בכיבוי", name)
+            else:
+                logger.error("scheduler: העבודה %s נכשלה", name, exc_info=True)
         except Exception:
             logger.error("scheduler: העבודה %s נכשלה", name, exc_info=True)
 

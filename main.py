@@ -162,6 +162,12 @@ def start_bot_loop(flask_app) -> asyncio.AbstractEventLoop:
                 loop.call_soon_threadsafe(loop.stop)
             except Exception:
                 logger.error("עצירת לולאת הבוטים נכשלה", exc_info=True)
+            try:
+                from core import pipeline_executor
+
+                pipeline_executor.shutdown()
+            except Exception:
+                logger.error("סגירת ה-pipeline executor נכשלה", exc_info=True)
 
     atexit.register(_shutdown)
     return loop
