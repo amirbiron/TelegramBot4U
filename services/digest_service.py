@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
-from memory.context import now_israel
+from services import daily_job
 
 logger = logging.getLogger(__name__)
 
@@ -139,46 +139,15 @@ async def run_daily_digest() -> dict:
 # ─── האם הגיע הזמן ───────────────────────────────────────────────────────
 
 
-def _today_key(now: datetime) -> str:
-    return now.strftime("%Y-%m-%d")
-
-
 def is_digest_due(now: datetime | None = None) -> bool:
-    """האם יש להריץ digest עכשיו — לפי השעה ולפי מה שכבר רץ היום.
-
-    **למה לא רק השעה:** ה-scheduler מתעורר כל כמה דקות, ולכן "השעה היא
-    20" נכון להרבה תעוררויות באותה שעה. הסימון היומי הוא מה שהופך את
-    הבדיקה לחד-פעמית — והוא גם מה שמונע שליחה כפולה אחרי deploy.
-
-    **למה לא "רק אם השעה בדיוק":** תהליך שעולה ב-20:40 היה מפספס את
-    ה-digest של אותו יום לגמרי. התנאי הוא "השעה כבר הגיעה והיום טרם
-    רץ", כך שאיחור מקצר את ההודעה ולא מבטל אותה.
-    """
-    import control_plane as cp
-
-    now = now or now_israel()
-    if now.hour < digest_hour():
-        return False
-    try:
-        last = cp.get_platform_meta(_META_KEY, "")
-    except Exception:
-        logger.error("digest: כשל בקריאת סימון הריצה האחרונה", exc_info=True)
-        # ‏fail closed לכיוון "לא שולחים": ‏digest כפול מרגיז יותר
-        # מ-digest חסר, וזו עבודה יומית שתחזור מחר ממילא.
-        return False
-    return last != _today_key(now)
+    """האם להריץ digest עכשיו — לפי השעה ולפי מה שכבר רץ היום."""
+    return daily_job.is_due(_META_KEY, digest_hour(), now)
 
 
 def mark_digest_ran(now: datetime | None = None) -> None:
     """סימון שה-digest של היום רץ.
 
-    נקרא **אחרי** הריצה ולא לפניה: תהליך שנפל באמצע אמור לנסות שוב
-    בתעוררות הבאה, לא לוותר על היום.
+    נקרא **אחרי** הריצה: תהליך שנפל באמצע אמור לנסות שוב בתעוררות
+    הבאה, לא לוותר על היום.
     """
-    import control_plane as cp
-
-    now = now or now_israel()
-    try:
-        cp.set_platform_meta(_META_KEY, _today_key(now))
-    except Exception:
-        logger.error("digest: כשל בסימון הריצה — ייתכן digest כפול", exc_info=True)
+    daily_job.mark_ran(_META_KEY, now)

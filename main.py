@@ -159,10 +159,22 @@ def create_wsgi_app(with_bots: bool = True):
     צריך אותו בלי לבנות אפליקציה.
     """
     from admin.app import create_admin_app
-    from config import validate_config
+    from config import fatal_config_errors, validate_config
 
     for err in validate_config(require_bot=with_bots, require_admin=True):
         logger.warning("⚠ תצורה: %s", err)
+
+    # תצורה פגומה (להבדיל מחסרה) עוצרת את העלייה. שירות שעולה עם מפתח
+    # הצפנה שגוי עובר health check ונראה תקין, בעוד כל כתיבת סוד בו
+    # נכשלת — ואיש לא יודע עד שלקוח חדש נתקע בהקמה. ‏deploy שנכשל הוא
+    # גלוי, ו-Render משאיר את הגרסה הקודמת רצה.
+    fatal = fatal_config_errors()
+    if fatal:
+        for err in fatal:
+            logger.critical("✖ תצורה פגומה: %s", err)
+        raise RuntimeError(
+            "העלייה נעצרה — תצורה פגומה: " + " | ".join(fatal)
+        )
 
     flask_app = create_admin_app()
     if not with_bots:

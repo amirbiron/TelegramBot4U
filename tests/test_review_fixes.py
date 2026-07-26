@@ -4,10 +4,18 @@
 הכותרת של כל מחלקה אומרת מה נשבר אם הטסט ייכשל.
 """
 
+from datetime import datetime
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 from telegram.error import BadRequest
+
+_IL = ZoneInfo("Asia/Jerusalem")
+
+
+def _il(hour: int, day: int = 15) -> datetime:
+    return datetime(2026, 7, day, hour, 30, tzinfo=_IL)
 
 
 # ─── PII sanitizer — קידומות טלפון ישראליות ────────────────────────────
@@ -681,3 +689,208 @@ class TestOwnerRepliesHaveNoMarkdown:
     def test_no_other_markdown_markers(self, marker):
         offenders = [t for t in self._texts() if marker in t]
         assert not offenders, f"סימני Markdown ({marker}) בהודעה לבעלים: {offenders}"
+
+
+# ─── סבב רביעי — ממצאים על שלב 4 ───────────────────────────────────────
+class TestDailyJobStorm:
+    """‏`is_due` נשען על ה-DB בלבד, ו-`mark_ran` רק לגג בכשל. התוצאה:
+    ‏platform.db נעול לרגע ⇒ גיבוי מלא של כל ה-tenants **כל דקה**."""
+
+    def test_failed_persist_still_stops_the_rerun(self, platform_db, monkeypatch):
+        import control_plane as cp
+        from services import daily_job
+
+        daily_job.reset_process_marks()
+        monkeypatch.setattr(
+            cp, "set_platform_meta",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("DB נעול")),
+        )
+        now = _il(5)
+        assert daily_job.is_due("job-x", 3, now) is True
+        daily_job.mark_ran("job-x", now)
+        # ה-DB לא נכתב — ובלי הסימון בזיכרון זה היה חוזר בכל tick
+        assert daily_job.is_due("job-x", 3, now) is False
+
+    def test_the_in_process_mark_is_scoped_to_the_day(self, platform_db, monkeypatch):
+        import control_plane as cp
+        from services import daily_job
+
+        daily_job.reset_process_marks()
+        monkeypatch.setattr(
+            cp, "set_platform_meta",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("DB נעול")),
+        )
+        daily_job.mark_ran("job-x", _il(5, day=15))
+        assert daily_job.is_due("job-x", 3, _il(5, day=16)) is True
+
+    def test_a_restart_falls_back_to_the_db(self, platform_db, monkeypatch):
+        """הסימון בזיכרון הוא תוספת ולא תחליף — restart מריץ שוב."""
+        import control_plane as cp
+        from services import daily_job
+
+        daily_job.reset_process_marks()
+        monkeypatch.setattr(
+            cp, "set_platform_meta",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("DB נעול")),
+        )
+        daily_job.mark_ran("job-x", _il(5))
+        daily_job.reset_process_marks()          # מדמה עליית תהליך
+        assert daily_job.is_due("job-x", 3, _il(5)) is True
+
+    def test_every_daily_job_shares_the_guard(self, platform_db, monkeypatch):
+        """שלושת ה-jobs היו שלושה עותקים של אותה לוגיקה."""
+        import control_plane as cp
+        from services import backup_job, daily_job, digest_service, retention_service
+
+        daily_job.reset_process_marks()
+        monkeypatch.setattr(
+            cp, "set_platform_meta",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("DB נעול")),
+        )
+        for mark, due, hour in (
+            (backup_job.mark_backup_ran, backup_job.is_backup_due, 3),
+            (retention_service.mark_retention_ran,
+             retention_service.is_retention_due, 4),
+            (digest_service.mark_digest_ran, digest_service.is_digest_due, 20),
+        ):
+            now = _il(hour + 1)
+            mark(now)
+            assert due(now) is False, f"{due.__name__} חוזר על עצמו אחרי כשל כתיבה"
+
+    def test_read_failure_is_fail_closed(self, platform_db, monkeypatch):
+        import control_plane as cp
+        from services import daily_job
+
+        daily_job.reset_process_marks()
+        monkeypatch.setattr(
+            cp, "get_platform_meta",
+            lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("DB נעול")),
+        )
+        assert daily_job.is_due("job-x", 3, _il(5)) is False
+
+
+class TestOwnerAlertTargetsMigration:
+    """‏`CREATE TABLE IF NOT EXISTS` לא משנה טבלה קיימת — ‏DB שנוצר עם
+    המפתח היחיד היה נשאר בלי `owner_chat_id` וכל שאילתה חדשה נכשלת."""
+
+    def _legacy_table(self, conn):
+        conn.execute("DROP TABLE IF EXISTS owner_alert_targets")
+        conn.executescript("""
+            CREATE TABLE owner_alert_targets (
+                owner_message_id INTEGER PRIMARY KEY,
+                user_id          TEXT NOT NULL,
+                chat_id          TEXT NOT NULL,
+                created_at       TEXT DEFAULT (datetime('now'))
+            );
+            INSERT INTO owner_alert_targets (owner_message_id, user_id, chat_id)
+            VALUES (4242, 'u1', 'c1');
+        """)
+
+    def test_upgrade_adds_the_composite_key(self, default_tenant_db):
+        import database as db
+        from migrations import run_migrations
+
+        with db.get_connection() as conn:
+            self._legacy_table(conn)
+            run_migrations(conn)
+            cols = {
+                r["name"] for r in conn.execute("PRAGMA table_info(owner_alert_targets)")
+            }
+            pk = [
+                r["name"] for r in conn.execute("PRAGMA table_info(owner_alert_targets)")
+                if r["pk"]
+            ]
+        assert "owner_chat_id" in cols
+        assert set(pk) == {"owner_chat_id", "owner_message_id"}
+
+    def test_existing_rows_survive(self, default_tenant_db):
+        import database as db
+        from migrations import run_migrations
+
+        with db.get_connection() as conn:
+            self._legacy_table(conn)
+            run_migrations(conn)
+            row = conn.execute(
+                "SELECT user_id, chat_id, owner_chat_id FROM owner_alert_targets"
+            ).fetchone()
+        assert row["user_id"] == "u1"
+        assert row["chat_id"] == "c1"
+        assert row["owner_chat_id"] == ""
+
+    def test_new_writes_work_after_the_upgrade(self, default_tenant_db):
+        import database as db
+        from migrations import run_migrations
+
+        with db.get_connection() as conn:
+            self._legacy_table(conn)
+            run_migrations(conn)
+        db.record_owner_alert_target(500, "u2", "c2", owner_chat_id="owner-1")
+        assert db.get_owner_alert_target(500, owner_chat_id="owner-1") is not None
+
+    def test_migration_is_idempotent(self, default_tenant_db):
+        import database as db
+        from migrations import run_migrations
+
+        with db.get_connection() as conn:
+            self._legacy_table(conn)
+            run_migrations(conn)
+            run_migrations(conn)
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM owner_alert_targets"
+            ).fetchone()["c"]
+        assert count == 1
+
+
+class TestFatalConfigStopsTheBoot:
+    """שירות שעולה עם מפתח הצפנה שגוי עובר health check ונראה תקין,
+    בעוד כל כתיבת סוד בו נכשלת בשקט."""
+
+    def test_broken_key_is_fatal(self, monkeypatch):
+        import config as _cfg
+        import utils.crypto as crypto
+
+        crypto._fernet_cache.clear()
+        monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", "not-a-fernet-key")
+        assert _cfg.fatal_config_errors()
+        crypto._fernet_cache.clear()
+
+    def test_missing_key_is_not_fatal(self, monkeypatch):
+        """חסר הוא לגיטימי — פיתוח מקומי, `--seed`, ‏tenant יחיד."""
+        import config as _cfg
+        import utils.crypto as crypto
+
+        crypto._fernet_cache.clear()
+        monkeypatch.delenv("SECRETS_ENCRYPTION_KEY", raising=False)
+        assert _cfg.fatal_config_errors() == []
+        crypto._fernet_cache.clear()
+
+    def test_valid_key_is_not_fatal(self, monkeypatch):
+        import config as _cfg
+        import utils.crypto as crypto
+
+        crypto._fernet_cache.clear()
+        monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", crypto.generate_new_key())
+        assert _cfg.fatal_config_errors() == []
+        crypto._fernet_cache.clear()
+
+    def test_missing_webhook_url_is_only_a_warning(self, monkeypatch):
+        """‏`--admin` בלי WEBHOOK_BASE_URL הוא מצב עבודה תקין."""
+        import config as _cfg
+        import utils.crypto as crypto
+
+        crypto._fernet_cache.clear()
+        monkeypatch.setattr(_cfg, "WEBHOOK_BASE_URL", "", raising=False)
+        monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", crypto.generate_new_key())
+        assert any("WEBHOOK_BASE_URL" in e for e in _cfg.validate_config(require_bot=True))
+        assert _cfg.fatal_config_errors() == []
+        crypto._fernet_cache.clear()
+
+    def test_boot_raises_on_fatal_config(self, monkeypatch):
+        import main
+        import utils.crypto as crypto
+
+        crypto._fernet_cache.clear()
+        monkeypatch.setenv("SECRETS_ENCRYPTION_KEY", "not-a-fernet-key")
+        with pytest.raises(RuntimeError, match="תצורה פגומה"):
+            main.create_wsgi_app(with_bots=False)
+        crypto._fernet_cache.clear()

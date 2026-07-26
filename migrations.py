@@ -30,10 +30,50 @@ def _ensure_column(conn, table: str, column: str, ddl_suffix: str) -> None:
     logger.info("migration: added column %s.%s", table, column)
 
 
-def run_migrations(conn) -> None:
-    """הפעלת כל המיגרציות — נקראת מתוך `init_db()` עם חיבור פתוח.
+def _rebuild_owner_alert_targets(conn) -> None:
+    """מעבר למפתח מורכב `(owner_chat_id, owner_message_id)`.
 
-    כרגע ריקה: כל הסכימה מוגדרת ב-`init_db`, ואין עדיין deployment עם
-    סכימה ישנה יותר. המיגרציה הראשונה תתווסף כאן.
+    הטבלה נוצרה בגרסה מוקדמת עם `owner_message_id` כמפתח יחיד. ‏message_id
+    של טלגרם ייחודי **פר-צ'אט** ולא פר-בוט, ולכן ל-tenant עם שני חיבורים
+    (חיבור מחדש מחשבון אחר) המפתח הישן מתנגש — ו-`/pause` בתגובה להתראה
+    אחת היה משתיק את הלקוח של התראה אחרת.
+
+    ‏SQLite אינו תומך בשינוי PRIMARY KEY, ולכן rebuild: טבלה חדשה,
+    העתקה, החלפה. הכול בתוך הטרנזקציה של `get_connection` — או שהמעבר
+    שלם, או שלא קרה.
+
+    ה-DDL כאן **משוכפל** מ-`init_db` בכוונה: מיגרציה חייבת לתאר את
+    הסכימה כפי שהייתה בזמן כתיבתה. אם `init_db` ישתנה בעתיד, המיגרציה
+    הזו עדיין צריכה לייצר בדיוק את מה שהיא הבטיחה.
     """
-    return None
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(owner_alert_targets)")}
+    if not cols or "owner_chat_id" in cols:
+        return  # הטבלה לא קיימת, או שהיא כבר בסכימה החדשה
+
+    logger.info("migration: rebuilding owner_alert_targets with a composite key")
+    conn.executescript("""
+        CREATE TABLE owner_alert_targets_new (
+            owner_chat_id    TEXT NOT NULL,
+            owner_message_id INTEGER NOT NULL,
+            user_id          TEXT NOT NULL,
+            chat_id          TEXT NOT NULL,
+            created_at       TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (owner_chat_id, owner_message_id)
+        );
+        -- ‏owner_chat_id ריק לרשומות הישנות: הצ'אט לא נשמר אז, ואין
+        -- מאיפה להשלים אותו. תגובה להתראה ישנה תיפול ל-autopilot
+        -- הגלובלי במקום להשתיק שיחה — התנהגות מוגדרת, לא שגויה.
+        INSERT INTO owner_alert_targets_new
+            (owner_chat_id, owner_message_id, user_id, chat_id, created_at)
+        SELECT '', owner_message_id, user_id, chat_id, created_at
+        FROM owner_alert_targets;
+        DROP TABLE owner_alert_targets;
+        ALTER TABLE owner_alert_targets_new RENAME TO owner_alert_targets;
+        CREATE INDEX IF NOT EXISTS idx_alert_targets_user
+            ON owner_alert_targets(user_id);
+    """)
+
+
+def run_migrations(conn) -> None:
+    """הפעלת כל המיגרציות — נקראת מתוך `init_db()` עם חיבור פתוח."""
+    _rebuild_owner_alert_targets(conn)

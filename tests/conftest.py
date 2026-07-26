@@ -48,6 +48,7 @@ def _isolate_env(monkeypatch, tmp_path):
     import control_plane as _cp
     import kb_service as _kb
     import rate_limiter as _rl
+    from services import daily_job as _dj
     from services import owner_channel as _oc
 
     _cp.invalidate_status_cache()
@@ -55,6 +56,7 @@ def _isolate_env(monkeypatch, tmp_path):
     _kb.invalidate_cache()
     _rl.reset_all()
     _oc.reset_dedup()
+    _dj.reset_process_marks()
     yield
 
 

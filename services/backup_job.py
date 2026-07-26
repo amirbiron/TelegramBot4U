@@ -12,6 +12,7 @@ import logging
 from datetime import datetime
 
 from memory.context import now_israel
+from services import daily_job
 
 logger = logging.getLogger(__name__)
 
@@ -23,34 +24,14 @@ _META_KEY = "backup_last_run_date"
 BACKUP_HOUR_LOCAL = 3
 
 
-def _today_key(now: datetime) -> str:
-    return now.strftime("%Y-%m-%d")
-
-
 def is_backup_due(now: datetime | None = None) -> bool:
     """האם להריץ גיבוי עכשיו — לפי השעה ולפי מה שכבר רץ היום."""
-    import control_plane as cp
-
-    now = now or now_israel()
-    if now.hour < BACKUP_HOUR_LOCAL:
-        return False
-    try:
-        last = cp.get_platform_meta(_META_KEY, "")
-    except Exception:
-        logger.error("backup: כשל בקריאת סימון הריצה האחרונה", exc_info=True)
-        return False
-    return last != _today_key(now)
+    return daily_job.is_due(_META_KEY, BACKUP_HOUR_LOCAL, now)
 
 
 def mark_backup_ran(now: datetime | None = None) -> None:
     """סימון שהגיבוי של היום רץ."""
-    import control_plane as cp
-
-    now = now or now_israel()
-    try:
-        cp.set_platform_meta(_META_KEY, _today_key(now))
-    except Exception:
-        logger.error("backup: כשל בסימון הריצה", exc_info=True)
+    daily_job.mark_ran(_META_KEY, now)
 
 
 def run_backup_now(now: datetime | None = None) -> dict:
@@ -64,5 +45,5 @@ def run_backup_now(now: datetime | None = None) -> dict:
 
     now = now or now_israel()
     return backup_service.run_backup(
-        stamp=_today_key(now), now_epoch=now.timestamp(),
+        stamp=daily_job.today_key(now), now_epoch=now.timestamp(),
     )

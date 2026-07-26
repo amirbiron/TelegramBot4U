@@ -471,3 +471,26 @@ def validate_config(*, require_bot: bool = False, require_admin: bool = False) -
         except EncryptionConfigError as exc:
             errors.append(str(exc))
     return errors
+
+
+def fatal_config_errors() -> list[str]:
+    """תצורה שאין לה שום שימוש לגיטימי — העלייה נעצרת עליה.
+
+    **ההבחנה מ-`validate_config`:** רוב מה שהיא מחזירה הוא "חסר", ולחסר
+    יש שימוש לגיטימי — פיתוח מקומי בלי בוט, ‏`--seed` בלי סודות, ‏`--admin`
+    בלי `WEBHOOK_BASE_URL`. עצירה עליהם הייתה שוברת זרימות אמיתיות.
+
+    מה שכאן הוא **"קיים אבל פגום"**: ערך שהמפעיל הציב בכוונה והוא שגוי.
+    אין תצורה שבה זה נכון, ולכן אין סיבה לעלות. בפרודקשן זה ההבדל בין
+    ‏deploy שנכשל וגלוי (‏Render משאיר את הגרסה הקודמת רצה) לבין שירות
+    שעולה, עובר health check, וכל כתיבת סוד בו נכשלת בשקט.
+    """
+    fatal: list[str] = []
+    from utils.crypto import EncryptionConfigError, is_encryption_configured, validate_key
+
+    if is_encryption_configured():
+        try:
+            validate_key()
+        except EncryptionConfigError as exc:
+            fatal.append(str(exc))
+    return fatal
