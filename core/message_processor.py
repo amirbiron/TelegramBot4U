@@ -187,6 +187,15 @@ def process_incoming_message(
     if is_handoff:
         fallback_count = consecutive_fallbacks + 1
 
+        # ‏T4.5 — כל handoff מתועד. בלי `text` ובלי שם: הכוונה, המונה,
+        # והאם זו ההסלמה שמעבירה לבעלים. התוכן עצמו יושב ב-DB
+        # (`unanswered_questions`) ובפאנל, ששניהם מוגני הרשאה — לוג
+        # אינו.
+        logger.info(
+            "handoff intent=%s streak=%d escalate=%s",
+            intent.value, fallback_count, fallback_count >= ESCALATION_THRESHOLD,
+        )
+
         # רישום פער ידע — הטריגר בערוץ הזה הוא ה-handoff (אין chunks).
         try:
             db.save_unanswered_question(

@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from dataclasses import dataclass
 
 try:
@@ -148,15 +149,38 @@ def chat_complete(messages: list[dict], *, temperature: float, max_tokens: int) 
 
     חריגות לא נתפסות כאן (מלבד לוג בענף Claude) — הקוראים ב-llm.py
     עוטפים ב-try/except עם fallback מסודר.
+
+    **נקודת המדידה היחידה של קריאות LLM** (‏T4.5). היא כאן ולא בענפי
+    הספקים כי זו הפונקציה שכל נתיב עובר דרכה, וגם קריאה שנכשלה נמדדת:
+    ‏latency של כשל הוא בדיוק מה שמעניין כשמדברים על timeout.
+    ה-payload עצמו לעולם לא נכנס ללוג — רק מטא (‏CLAUDE.md: בלי תוכן
+    הודעות ב-INFO).
     """
     provider, model, api_key = get_llm_provider_config()
-    if provider == "claude":
-        return _chat_complete_claude(
-            messages, model=model, max_tokens=max_tokens, api_key=api_key,
+    started = time.monotonic()
+    try:
+        if provider == "claude":
+            result = _chat_complete_claude(
+                messages, model=model, max_tokens=max_tokens, api_key=api_key,
+            )
+        else:
+            result = _chat_complete_openai(
+                messages, temperature=temperature, max_tokens=max_tokens, model=model,
+            )
+    except Exception as exc:
+        logger.warning(
+            "llm_call provider=%s model=%s ms=%d status=error error=%s",
+            provider, model or "-", int((time.monotonic() - started) * 1000),
+            type(exc).__name__,
         )
-    return _chat_complete_openai(
-        messages, temperature=temperature, max_tokens=max_tokens, model=model,
+        raise
+    logger.info(
+        "llm_call provider=%s model=%s ms=%d prompt_tokens=%s completion_tokens=%s "
+        "finish=%s",
+        provider, result.model, int((time.monotonic() - started) * 1000),
+        result.prompt_tokens, result.completion_tokens, result.finish_reason,
     )
+    return result
 
 
 def _get_openai_model() -> str:

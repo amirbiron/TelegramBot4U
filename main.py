@@ -21,21 +21,40 @@ import threading
 
 from tenancy import DEFAULT_TENANT, tenant_context
 
-# ─── ניטור שגיאות (אופציונלי) ────────────────────────────────────────────
-# ‏sentry-sdk הוא תלות רשומה, אבל היעדרה לא אמור להפיל את ה-boot
-# (דפוס אוניברסלי #3 — אתחול SDK מוריד פיצ'ר, לא מקריס).
-_sentry_dsn = os.getenv("SENTRY_DSN", "")
-if _sentry_dsn:
+
+def init_sentry() -> bool:
+    """ניטור שגיאות (אופציונלי). מחזיר True אם אותחל.
+
+    ‏sentry-sdk הוא תלות רשומה, אבל היעדרה לא אמורה להפיל את ה-boot
+    (דפוס אוניברסלי #3 — אתחול SDK מוריד פיצ'ר, לא מקריס).
+
+    ‏`send_default_pii=False` מפורש ולא בהסתמכות על ברירת המחדל: הוא
+    מה שמונע מ-Sentry לצרף לכל אירוע את כתובת ה-IP ואת זהות המשתמש.
+    בערוץ הזה הנתונים הם תכתובת פרטית של לקוחות של הלקוח שלנו, וזליגה
+    שלהם לספק צד-שלישי אינה משהו שנרצה לגלות מברירת מחדל שהשתנתה
+    בגרסה.
+    """
+    import config as _cfg
+
+    dsn = getattr(_cfg, "SENTRY_DSN", "") or os.getenv("SENTRY_DSN", "")
+    if not dsn:
+        return False
     try:
         import sentry_sdk
 
         sentry_sdk.init(
-            dsn=_sentry_dsn,
+            dsn=dsn,
             traces_sample_rate=0.2,
             environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+            send_default_pii=False,
         )
+        return True
     except Exception:
         logging.getLogger(__name__).error("אתחול Sentry נכשל — ממשיכים בלעדיו", exc_info=True)
+        return False
+
+
+init_sentry()
 
 logging.basicConfig(
     level=logging.INFO,

@@ -47,8 +47,20 @@ _EMAIL_PATTERN = re.compile(
     r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}\b"
 )
 
+# סודות — לצורך לוגים בלבד (`sanitize_for_log`). לא נכנס ל-`sanitize_pii`
+# כי שם היעד הוא DB ומייל, ושם ההקשר שונה.
+#   - `sk-...` / `sk-proj-...` — מפתחות OpenAI ותואמים
+#   - טוקן בוט טלגרם — `<digits>:<35 תווים>`
+#   - `Bearer <token>` בכותרות שמישהו הדפיס
+_SECRET_PATTERN = re.compile(
+    r"\bsk-[A-Za-z0-9_-]{16,}"
+    r"|\b\d{6,12}:[A-Za-z0-9_-]{30,}"
+    r"|\bBearer\s+[A-Za-z0-9._-]{16,}",
+)
+
 PHONE_REDACTION = "[REDACTED_PHONE]"
 EMAIL_REDACTION = "[REDACTED_EMAIL]"
+SECRET_REDACTION = "[REDACTED_SECRET]"
 
 
 class SanitationResult(NamedTuple):
@@ -87,6 +99,26 @@ def sanitize_pii(text: str) -> SanitationResult:
         phones_redacted=phones_count,
         emails_redacted=emails_count,
     )
+
+
+def sanitize_for_log(text: str) -> str:
+    """‏PII **וסודות** מוסרים מטקסט שעומד להיכנס ללוג (‏T4.5).
+
+    ההבדל מ-`sanitize_pii`: שם המטרה היא DB / מייל למפתח, ולכן די
+    בטלפון ומייל. כאן היעד הוא קובץ לוג — שנשלח ל-Sentry, נאסף
+    לשירות ריכוז, ולרוב שמור לאורך זמן בלי הצפנה — ולכן מוסרים גם
+    מפתחות API וטוקנים. `sk-...` בלוג הוא סוד שדלף, גם אם הודפס
+    "רק לדיבוג".
+
+    ‏**זו לא הגנה שמותר להסתמך עליה**: הכלל הוא לא להעביר תוכן חופשי
+    ללוג מלכתחילה (הטסט ב-`tests/test_observability.py` אוכף אותו).
+    הפונקציה הזאת היא רשת ביטחון לנתיבים שבהם באמת חייבים להדפיס טקסט
+    שמקורו חיצוני.
+    """
+    if not text:
+        return ""
+    sanitized = sanitize_pii(text).text
+    return _SECRET_PATTERN.sub(SECRET_REDACTION, sanitized)
 
 
 def has_pii_indicators(text: str) -> bool:

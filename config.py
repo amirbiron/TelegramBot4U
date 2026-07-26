@@ -112,6 +112,10 @@ ADMIN_COOKIE_SECURE = os.getenv("ADMIN_COOKIE_SECURE", "true").lower() in (
     "true", "1", "yes",
 )
 
+# ─── ניטור ───────────────────────────────────────────────────────────────
+# ריק ⇒ Sentry לא עולה כלל. ראה `main.init_sentry`.
+SENTRY_DSN = os.getenv("SENTRY_DSN", "")
+
 # ─── דגלי פיצ'רים ────────────────────────────────────────────────────────
 # הזרמה "אנושית" של התשובה (sendMessageDraft). כבוי כברירת מחדל — ראה
 # משימת האימות V4 ב-docs/verification_log.md.
